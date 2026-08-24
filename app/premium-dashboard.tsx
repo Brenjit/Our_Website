@@ -672,7 +672,11 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
 
     {addOpen && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") closeAddTask(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) closeAddTask(); }}>
       <form className="premium-modal premium-task-modal" onSubmit={addTask}>
-        <button type="button" className="premium-modal-close" onClick={closeAddTask} aria-label="Close"><X size={17} /></button>
+        <div className="premium-task-modal-bar">
+          <button type="button" className="premium-modal-close" onClick={closeAddTask} aria-label="Close"><X size={17} /></button>
+          <div><small>NEW TASK</small><strong>Plan your day</strong></div>
+          <button className="premium-create-button premium-create-button-top" disabled={busyId === "new"}>{busyId === "new" ? "Adding…" : "Add to my day"}<ChevronRight size={16} /></button>
+        </div>
         <div className="premium-modal-title"><span><Plus size={17} /></span><div><p>CREATE A TASK</p><h2>What will move your day forward?</h2></div></div>
         <label className="premium-field">Task name<input name="title" value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} placeholder="Study calculus, cook dinner…" maxLength={80} required /></label>
         <div className="premium-form-grid">
@@ -698,7 +702,6 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
           <div className="premium-animation-preview">{suggestedAnimation ? <LottieMotion src={suggestedAnimation} /> : <span className={`premium-fallback-mini ${categorySlug(draftCategory)}`}><CategoryIcon category={draftCategory} size={27} /></span>}</div>
           <div><span><Sparkles size={12} /> SMART ANIMATION</span><strong>{suggestion ? `${suggestion[0].toUpperCase()}${suggestion.slice(1)} matched` : "Calm focus matched"}</strong><p>Chosen automatically from your task name. Add more Lotties anytime to grow the library.</p></div>
         </div>
-        <button className="premium-create-button" disabled={busyId === "new"}>{busyId === "new" ? "Adding to your day…" : "Add to my day"}<ChevronRight size={17} /></button>
       </form>
     </div>}
 
