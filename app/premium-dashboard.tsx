@@ -6,6 +6,7 @@ import {
   BarChart3,
   BookOpen,
   Briefcase,
+  CalendarClock,
   CalendarDays,
   Check,
   ChevronDown,
@@ -16,11 +17,13 @@ import {
   Coffee,
   Crown,
   Flame,
+  GripVertical,
   Heart,
   Home,
   LockKeyhole,
   LogOut,
   Pause,
+  Pencil,
   Play,
   Plus,
   Repeat2,
@@ -31,7 +34,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
 type TaskCategory = "Study" | "Productive" | "Entertainment" | "Daily essentials";
 type TaskSchedule = "once" | "daily" | "weekdays" | "weekly";
@@ -49,6 +52,7 @@ type Task = {
   scheduledWeekday: number | null;
   scheduledTime: string | null;
   animationKey: "study" | "study-planning" | "cooking" | "auto";
+  sortOrder: number;
   completedAt: string | null;
   activeSession: {
     id: string;
@@ -406,19 +410,36 @@ function scheduleLabel(schedule: TaskSchedule) {
   return "Today";
 }
 
-function QueueTask({ task, busy, now, onAction, onPause }: {
+function QueueTask({ task, busy, now, dragging, isFirst, isLast, onAction, onPause, onEdit, onDragStart, onMove }: {
   task: Task;
   busy: boolean;
   now: number;
+  dragging: boolean;
+  isFirst: boolean;
+  isLast: boolean;
   onAction: (task: Task, action: "toggle" | "start" | "finish" | "resume") => void;
   onPause: (task: Task) => void;
+  onEdit: (task: Task) => void;
+  onDragStart: (taskId: string, event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onMove: (taskId: string, direction: -1 | 1) => void;
 }) {
   const active = Boolean(task.activeSession);
   const timed = task.durationMinutes > 0;
   const countdown = countdownState(task, now);
   const schedule = scheduleState(task, now);
-  return <article className={`premium-task ${task.completedAt ? "is-done" : ""} ${active ? "is-active" : ""} schedule-${schedule.phase}`}>
+  return <article data-task-id={task.id} className={`premium-task category-${categorySlug(task.category)} ${task.completedAt ? "is-done" : ""} ${active ? "is-active" : ""} ${dragging ? "is-dragging" : ""} schedule-${schedule.phase}`}>
     <button
+      type="button"
+      className="premium-drag-handle"
+      onPointerDown={(event) => onDragStart(task.id, event)}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowUp" && !isFirst) { event.preventDefault(); onMove(task.id, -1); }
+        if (event.key === "ArrowDown" && !isLast) { event.preventDefault(); onMove(task.id, 1); }
+      }}
+      aria-label={`Reorder ${task.title}. Use arrow keys or drag.`}
+    ><GripVertical size={14} /></button>
+    <button
+      type="button"
       className={`premium-task-action ${categorySlug(task.category)}`}
       onClick={() => onAction(task, timed ? countdown?.paused ? "resume" : active ? "finish" : "start" : "toggle")}
       disabled={Boolean(task.completedAt && timed) || (timed && busy && !active)}
@@ -427,9 +448,9 @@ function QueueTask({ task, busy, now, onAction, onPause }: {
       {task.completedAt ? <Check size={17} strokeWidth={3} /> : countdown?.paused ? <Play size={14} fill="currentColor" /> : active ? <Square size={11} fill="currentColor" /> : <CategoryIcon category={task.category} size={16} />}
     </button>
     <div className="premium-task-copy">
-      <strong>{task.title}</strong>
+      <div className="premium-task-title-row"><strong>{task.title}</strong><button type="button" onClick={() => onEdit(task)} disabled={active} aria-label={`Edit ${task.title}`}><Pencil size={11} /></button></div>
       <span><b>{task.category}</b> · {scheduleLabel(task.scheduleType)}{timed ? ` · ${task.durationMinutes} min` : ""}</span>
-      {!task.completedAt && !active && <span className={`premium-task-schedule ${schedule.phase}`}><Clock3 size={9} /><b>{schedule.label}</b> · {schedule.detail}</span>}
+      {!task.completedAt && !active && <button type="button" className={`premium-task-schedule ${schedule.phase}`} onClick={() => onEdit(task)}><Clock3 size={9} /><b>{schedule.label}</b> · {schedule.detail}<Pencil size={9} /></button>}
     </div>
     {countdown ? <div className={`premium-task-live ${countdown.overtime ? "is-overtime" : ""}`}>
       <strong>{countdown.label}</strong>
@@ -456,12 +477,24 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [draftSchedule, setDraftSchedule] = useState<TaskSchedule>("once");
   const [draftTime, setDraftTime] = useState(defaultScheduledTime);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const [editTask, setEditTask] = useState<Task | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editCategory, setEditCategory] = useState<TaskCategory>("Study");
+  const [editDuration, setEditDuration] = useState("25");
+  const [editSchedule, setEditSchedule] = useState<TaskSchedule>("once");
+  const [editDate, setEditDate] = useState(todayKey);
+  const [editTime, setEditTime] = useState(defaultScheduledTime);
+  const [editTimePickerOpen, setEditTimePickerOpen] = useState(false);
+  const [taskOrder, setTaskOrder] = useState<string[] | null>(null);
+  const taskOrderRef = useRef<string[]>([]);
+  const [draggingTaskId, setDraggingTaskId] = useState("");
   const [activeTab, setActiveTab] = useState<"home" | "tasks" | "progress" | "activity">("home");
 
   const load = useCallback(async () => {
     try {
       const result = await api<DashboardData>(`/api/dashboard?date=${todayKey()}&from=${weekStartKey()}`);
       setData(result);
+      setTaskOrder(null);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t load your day");
@@ -483,10 +516,53 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
 
   const me = data?.profiles.find((profile) => profile.isCurrent);
   const partner = data?.profiles.find((profile) => !profile.isCurrent);
+  const serverTaskIds = useMemo(() => me?.tasks.map((task) => task.id) ?? [], [me]);
   const winner = useMemo(() => {
     if (!me || !partner || me.score === partner.score) return null;
     return me.score > partner.score ? me : partner;
   }, [me, partner]);
+
+  const persistTaskOrder = useCallback(async (orderedIds: string[]) => {
+    try {
+      await api("/api/tasks/reorder", { method: "POST", body: JSON.stringify({ orderedIds }) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t save that task order");
+      await load();
+    }
+  }, [load]);
+
+  useEffect(() => {
+    if (!draggingTaskId) return;
+    const move = (event: PointerEvent) => {
+      event.preventDefault();
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-task-id]");
+      const targetId = target?.dataset.taskId;
+      if (!targetId || targetId === draggingTaskId) return;
+      setTaskOrder((current) => {
+        const activeOrder = current ?? taskOrderRef.current;
+        const from = activeOrder.indexOf(draggingTaskId);
+        const to = activeOrder.indexOf(targetId);
+        if (from < 0 || to < 0 || from === to) return current;
+        const next = [...activeOrder];
+        next.splice(to, 0, next.splice(from, 1)[0]);
+        taskOrderRef.current = next;
+        return next;
+      });
+    };
+    const finish = () => {
+      const orderedIds = [...taskOrderRef.current];
+      setDraggingTaskId("");
+      void persistTaskOrder(orderedIds);
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", finish, { once: true });
+    window.addEventListener("pointercancel", finish, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    };
+  }, [draggingTaskId, persistTaskOrder]);
 
   async function taskAction(task: Task, action: "toggle" | "start" | "finish" | "resume") {
     setBusyId(task.id);
@@ -542,6 +618,62 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     setAddOpen(false);
   }
 
+  function openEditTask(task: Task) {
+    if (task.activeSession) {
+      setError("Finish the running session before changing its plan");
+      return;
+    }
+    setEditTask(task);
+    setEditTitle(task.title);
+    setEditCategory(task.category);
+    setEditDuration(String(task.durationMinutes));
+    setEditSchedule(task.scheduleType);
+    setEditDate(task.scheduledDate ?? todayKey());
+    setEditTime(task.scheduledTime ?? defaultScheduledTime());
+    setEditTimePickerOpen(false);
+  }
+
+  function closeEditTask() {
+    setEditTimePickerOpen(false);
+    setEditTask(null);
+  }
+
+  async function updateTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editTask) return;
+    const form = new FormData(event.currentTarget);
+    setBusyId(`edit-${editTask.id}`);
+    setError("");
+    try {
+      await api(`/api/tasks/${editTask.id}`, { method: "PATCH", body: JSON.stringify(Object.fromEntries(form.entries())) });
+      closeEditTask();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t save those task changes");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  function startTaskDrag(taskId: string, event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    taskOrderRef.current = taskOrder?.length ? [...taskOrder] : [...serverTaskIds];
+    setDraggingTaskId(taskId);
+  }
+
+  function moveTask(taskId: string, direction: -1 | 1) {
+    const current = taskOrder?.length ? taskOrder : serverTaskIds;
+    const from = current.indexOf(taskId);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= current.length) return;
+    const next = [...current];
+    next.splice(to, 0, next.splice(from, 1)[0]);
+    taskOrderRef.current = next;
+    setTaskOrder(next);
+    void persistTaskOrder(next);
+  }
+
   if (!data || !me || !partner) return <main className="premium-loading"><span><Heart size={25} fill="currentColor" /></span><p>{error || "Preparing your day…"}</p></main>;
 
   const currentNow = now ?? Date.parse(data.generatedAt);
@@ -573,6 +705,9 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const focusStudy = me.focusMinutes.study + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Study" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
   const focusProductive = me.focusMinutes.productive + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Productive" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
   const weekdayName = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date());
+  const editWeekdayName = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date(`${editDate}T12:00:00`));
+  const taskOrderIndex = new Map((taskOrder ?? serverTaskIds).map((id, index) => [id, index]));
+  const plannerTasks = [...me.tasks].sort((a, b) => (taskOrderIndex.get(a.id) ?? a.sortOrder) - (taskOrderIndex.get(b.id) ?? b.sortOrder));
 
   return <div className={`premium-app tab-${activeTab}`}>
     <aside className="premium-rail">
@@ -646,8 +781,10 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             {partnerTask && <b>{partnerTimer?.label}</b>}
           </div>
 
+          <div className="premium-planner-hint"><span><GripVertical size={12} /> Drag to reorder</span><span><CalendarClock size={12} /> Tap time to reschedule</span></div>
+
           <div className="premium-task-list">
-            {me.tasks.length ? me.tasks.map((task) => <QueueTask key={task.id} task={task} busy={Boolean(me.busy || busyId)} now={currentNow} onAction={taskAction} onPause={setPauseTask} />) : <div className="premium-empty"><Sparkles size={22} /><strong>Your day is open</strong><p>Add a task and make the first move.</p></div>}
+            {plannerTasks.length ? plannerTasks.map((task, index) => <QueueTask key={task.id} task={task} busy={Boolean(me.busy || busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === plannerTasks.length - 1} onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-empty"><Sparkles size={22} /><strong>Your day is open</strong><p>Add a task and make the first move.</p></div>}
           </div>
           <button className="premium-add-row" onClick={() => setAddOpen(true)}><Plus size={15} /> Add to today</button>
 
@@ -702,6 +839,39 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
           <div className="premium-animation-preview">{suggestedAnimation ? <LottieMotion src={suggestedAnimation} /> : <span className={`premium-fallback-mini ${categorySlug(draftCategory)}`}><CategoryIcon category={draftCategory} size={27} /></span>}</div>
           <div><span><Sparkles size={12} /> SMART ANIMATION</span><strong>{suggestion ? `${suggestion[0].toUpperCase()}${suggestion.slice(1)} matched` : "Calm focus matched"}</strong><p>Chosen automatically from your task name. Add more Lotties anytime to grow the library.</p></div>
         </div>
+      </form>
+    </div>}
+
+    {editTask && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") closeEditTask(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditTask(); }}>
+      <form className="premium-modal premium-task-modal premium-edit-modal" onSubmit={updateTask}>
+        <div className="premium-task-modal-bar">
+          <button type="button" className="premium-modal-close" onClick={closeEditTask} aria-label="Close"><X size={17} /></button>
+          <div><small>EDIT TASK</small><strong>Reschedule your plan</strong></div>
+          <button className="premium-create-button premium-create-button-top" disabled={busyId === `edit-${editTask.id}`}>{busyId === `edit-${editTask.id}` ? "Saving…" : "Save changes"}<Check size={16} /></button>
+        </div>
+        <div className="premium-modal-title"><span><CalendarClock size={17} /></span><div><p>FLEXIBLE PLANNING</p><h2>Make this task fit your day.</h2></div></div>
+        <label className="premium-field">Task name<input name="title" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={80} required /></label>
+        <div className="premium-form-grid">
+          <label className="premium-field">Category<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
+          <label className="premium-field">Focus duration<input name="durationMinutes" type="number" min="0" max="240" value={editDuration} onChange={(event) => setEditDuration(event.target.value)} /><span>minutes</span></label>
+          <div className="premium-field"><b className="premium-field-name">Start time</b><input name="scheduledTime" type="hidden" value={editTime} /><button className="premium-time-trigger" type="button" onClick={() => setEditTimePickerOpen((open) => !open)} aria-expanded={editTimePickerOpen}><Clock3 size={15} /><span>{formatClockTime(editTime)}</span><ChevronDown size={14} /></button></div>
+        </div>
+
+        {editTimePickerOpen && <TimePicker value={editTime} onChange={setEditTime} onClose={() => setEditTimePickerOpen(false)} />}
+
+        <div className="premium-time-note premium-reschedule-note"><CalendarClock size={15} /><span><strong>Moves to {formatClockTime(editTime)}</strong><small>The focus screen and “Now / Late” status update immediately from your local time.</small></span></div>
+
+        <fieldset className="premium-schedule"><legend>Repeat</legend><input type="hidden" name="scheduleType" value={editSchedule} />
+          {([
+            ["once", "One day", "Choose date", CalendarDays],
+            ["daily", "Every day", "7 days", Repeat2],
+            ["weekdays", "Weekdays", "Mon–Fri", Briefcase],
+            ["weekly", "Weekly", `Every ${editWeekdayName}`, CalendarDays],
+          ] as const).map(([value, label, detail, Icon]) => <button type="button" key={value} className={editSchedule === value ? "selected" : ""} onClick={() => setEditSchedule(value)} aria-pressed={editSchedule === value}><Icon size={15} /><span><strong>{label}</strong><small>{detail}</small></span>{editSchedule === value && <Check size={13} />}</button>)}
+        </fieldset>
+
+        <label className={`premium-field premium-date-field ${editSchedule === "once" ? "is-visible" : ""}`}>Scheduled date<input name="dateKey" type="date" value={editDate} onChange={(event) => setEditDate(event.target.value)} required /></label>
+        <p className="premium-edit-note"><LockKeyhole size={12} /> Previous completions, tracked minutes, and points stay unchanged.</p>
       </form>
     </div>}
 

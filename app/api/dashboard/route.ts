@@ -24,6 +24,7 @@ type TaskRow = {
   scheduled_weekday: number | null;
   scheduled_time: string | null;
   animation_key: string;
+  sort_order: number;
   completed_at: string | null;
   activity_id: string | null;
   started_at: string | null;
@@ -66,7 +67,7 @@ export async function GET(request: Request) {
       .bind(user.couple_id)
       .all<Profile>(),
     db.prepare(`SELECT t.id, t.owner_id, t.title, t.category, t.duration_minutes, t.points,
-        t.schedule_type, t.scheduled_date, t.scheduled_weekday, t.scheduled_time, t.animation_key,
+        t.schedule_type, t.scheduled_date, t.scheduled_weekday, t.scheduled_time, t.animation_key, t.sort_order,
         c.completed_at,
         a.id AS activity_id, a.started_at,
         ap.id AS pause_id, ap.category AS pause_category, ap.started_at AS pause_started_at,
@@ -91,7 +92,7 @@ export async function GET(request: Request) {
         OR (t.schedule_type = 'weekly' AND t.scheduled_weekday = ?)
         OR (t.schedule_type = 'once' AND t.scheduled_date = ?)
       )
-      ORDER BY t.owner_id, t.scheduled_time IS NULL, t.scheduled_time, t.sort_order, t.created_at`)
+      ORDER BY t.owner_id, t.sort_order, t.scheduled_time IS NULL, t.scheduled_time, t.created_at`)
       .bind(date, user.couple_id, weekday, weekday, date)
       .all<TaskRow>(),
     db.prepare(`SELECT p.id AS profile_id, COALESCE(SUM(c.points_earned), 0) AS score,
@@ -183,6 +184,7 @@ export async function GET(request: Request) {
         scheduledWeekday: task.scheduled_weekday,
         scheduledTime: task.scheduled_time,
         animationKey: task.animation_key,
+        sortOrder: task.sort_order,
         completedAt: task.completed_at,
         activeSession: task.activity_id
           ? {
