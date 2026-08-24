@@ -21,6 +21,7 @@ import {
   GripVertical,
   Heart,
   Home,
+  KeyRound,
   LockKeyhole,
   LogOut,
   Pause,
@@ -86,6 +87,7 @@ type DashboardProfile = PublicProfile & {
 type DashboardData = {
   generatedAt: string;
   user: PublicProfile;
+  isInitializer: boolean;
   profiles: DashboardProfile[];
   recentActivity: Array<{
     id: string;
@@ -493,6 +495,14 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const taskOrderRef = useRef<string[]>([]);
   const [draggingTaskId, setDraggingTaskId] = useState("");
   const [activeTab, setActiveTab] = useState<"home" | "tasks" | "progress" | "activity">("home");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [partnerPin, setPartnerPin] = useState("");
+  const [confirmPartnerPin, setConfirmPartnerPin] = useState("");
+  const [pinBusy, setPinBusy] = useState<"self" | "partner" | "">("");
+  const [pinMessage, setPinMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -682,6 +692,57 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     }
   }
 
+  function closeSettings() {
+    setSettingsOpen(false);
+    setCurrentPin("");
+    setNewPin("");
+    setConfirmPin("");
+    setPartnerPin("");
+    setConfirmPartnerPin("");
+    setPinMessage(null);
+  }
+
+  async function changeOwnPin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPinMessage(null);
+    if (newPin !== confirmPin) {
+      setPinMessage({ tone: "error", text: "The new PINs do not match." });
+      return;
+    }
+    setPinBusy("self");
+    try {
+      await api("/api/auth/pin", { method: "PATCH", body: JSON.stringify({ currentPin, newPin }) });
+      setCurrentPin("");
+      setNewPin("");
+      setConfirmPin("");
+      setPinMessage({ tone: "success", text: "Your PIN is changed. Use the new PIN next time you sign in." });
+    } catch (err) {
+      setPinMessage({ tone: "error", text: err instanceof Error ? err.message : "Couldn’t change your PIN" });
+    } finally {
+      setPinBusy("");
+    }
+  }
+
+  async function resetPartnerPin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPinMessage(null);
+    if (partnerPin !== confirmPartnerPin) {
+      setPinMessage({ tone: "error", text: "The partner PINs do not match." });
+      return;
+    }
+    setPinBusy("partner");
+    try {
+      await api("/api/auth/pin/reset", { method: "PATCH", body: JSON.stringify({ profileId: partner?.id, newPin: partnerPin }) });
+      setPartnerPin("");
+      setConfirmPartnerPin("");
+      setPinMessage({ tone: "success", text: `${partner?.name}'s PIN was reset. Share the new PIN with them privately.` });
+    } catch (err) {
+      setPinMessage({ tone: "error", text: err instanceof Error ? err.message : "Couldn’t reset that PIN" });
+    } finally {
+      setPinBusy("");
+    }
+  }
+
   function startTaskDrag(taskId: string, event: ReactPointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -746,7 +807,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         <button className={activeTab === "progress" ? "active" : ""} onClick={() => setActiveTab("progress")} aria-label="Progress"><BarChart3 size={19} /><span>Progress</span></button>
         <button className={activeTab === "activity" ? "active" : ""} onClick={() => setActiveTab("activity")} aria-label="Activity"><Clock3 size={19} /><span>Activity</span></button>
       </nav>
-      <button className="premium-profile-button" onClick={onLogout} aria-label="Switch profile"><span className={me.accent}>{me.avatar}</span><LogOut size={15} /></button>
+      <button className="premium-profile-button" onClick={() => setSettingsOpen(true)} aria-label="Open profile settings"><span className={me.accent}>{me.avatar}</span><KeyRound size={15} /></button>
     </aside>
 
     <main className="premium-page">
@@ -755,7 +816,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         <div className="premium-top-actions">
           <span className="premium-score-pill"><Flame size={15} fill="currentColor" /> {formatPoints(me.score)} pts</span>
           <button onClick={() => setAddOpen(true)}><Plus size={16} /> New task</button>
-          <button className="premium-user" onClick={onLogout}><span className={me.accent}>{me.avatar}</span><b>{me.name}</b></button>
+          <button className="premium-user" onClick={() => setSettingsOpen(true)} aria-label={`Open ${me.name}'s profile settings`}><span className={me.accent}>{me.avatar}</span><b>{me.name}</b></button>
         </div>
       </header>
 
@@ -848,6 +909,40 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
 
     {completeToast && <div className="premium-complete-toast" role="status"><span><CircleCheck size={20} /></span><div><strong>Beautiful work.</strong><small>{completeToast} completed</small></div></div>}
     {plannerToast && <div className="premium-planner-toast" role="status"><span><CircleCheck size={18} /></span><div><strong>Planner updated</strong><small>{plannerToast}</small></div></div>}
+
+    {settingsOpen && <div className="premium-modal-backdrop premium-settings-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") closeSettings(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) closeSettings(); }}>
+      <section className="premium-modal premium-settings-modal" role="dialog" aria-modal="true" aria-labelledby="premium-settings-title">
+        <button type="button" className="premium-modal-close" onClick={closeSettings} aria-label="Close profile settings"><X size={17} /></button>
+        <div className="premium-settings-identity">
+          <span className={`premium-settings-avatar ${me.accent}`}>{me.avatar}</span>
+          <div><span className="premium-kicker">PRIVATE PROFILE</span><h2 id="premium-settings-title">{me.name}&apos;s settings</h2><p>Manage only your sign-in and profile session.</p></div>
+        </div>
+
+        {pinMessage && <div className={`premium-pin-message is-${pinMessage.tone}`} role={pinMessage.tone === "error" ? "alert" : "status"}>{pinMessage.tone === "success" ? <CircleCheck size={15} /> : <AlertTriangle size={15} />}<span>{pinMessage.text}</span></div>}
+
+        <form className="premium-pin-section" onSubmit={changeOwnPin}>
+          <div className="premium-pin-heading"><span><KeyRound size={16} /></span><div><strong>Change my PIN</strong><small>Confirm your current PIN, then choose 4–8 new digits.</small></div></div>
+          <div className="premium-pin-grid">
+            <label className="premium-field">Current PIN<input type="password" inputMode="numeric" autoComplete="current-password" value={currentPin} onChange={(event) => setCurrentPin(event.target.value)} minLength={4} maxLength={8} pattern="[0-9]+" placeholder="••••" required /></label>
+            <label className="premium-field">New PIN<input type="password" inputMode="numeric" autoComplete="new-password" value={newPin} onChange={(event) => setNewPin(event.target.value)} minLength={4} maxLength={8} pattern="[0-9]+" placeholder="4–8 digits" required /></label>
+            <label className="premium-field">Confirm new PIN<input type="password" inputMode="numeric" autoComplete="new-password" value={confirmPin} onChange={(event) => setConfirmPin(event.target.value)} minLength={4} maxLength={8} pattern="[0-9]+" placeholder="Repeat PIN" required /></label>
+          </div>
+          <button className="premium-pin-submit" disabled={Boolean(pinBusy)}>{pinBusy === "self" ? "Changing…" : "Change my PIN"}<ChevronRight size={15} /></button>
+        </form>
+
+        {data.isInitializer && <form className="premium-pin-section premium-owner-section" onSubmit={resetPartnerPin}>
+          <div className="premium-pin-heading"><span><LockKeyhole size={16} /></span><div><strong>Reset {partner.name}&apos;s PIN</strong><small>Setup-owner recovery. The old PIN cannot be displayed, but you can replace it.</small></div></div>
+          <div className="premium-pin-grid is-partner">
+            <label className="premium-field">New PIN for {partner.name}<input type="password" inputMode="numeric" autoComplete="new-password" value={partnerPin} onChange={(event) => setPartnerPin(event.target.value)} minLength={4} maxLength={8} pattern="[0-9]+" placeholder="4–8 digits" required /></label>
+            <label className="premium-field">Confirm partner PIN<input type="password" inputMode="numeric" autoComplete="new-password" value={confirmPartnerPin} onChange={(event) => setConfirmPartnerPin(event.target.value)} minLength={4} maxLength={8} pattern="[0-9]+" placeholder="Repeat PIN" required /></label>
+          </div>
+          <p className="premium-pin-safety"><LockKeyhole size={11} /> Resetting signs {partner.name} out on any other device. Their tasks and progress are untouched.</p>
+          <button className="premium-pin-submit is-secondary" disabled={Boolean(pinBusy)}>{pinBusy === "partner" ? "Resetting…" : `Set ${partner.name}'s new PIN`}<ChevronRight size={15} /></button>
+        </form>}
+
+        <button type="button" className="premium-switch-profile" onClick={onLogout}><LogOut size={14} /> Switch profile</button>
+      </section>
+    </div>}
 
     {addOpen && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") closeAddTask(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) closeAddTask(); }}>
       <form className="premium-modal premium-task-modal" onSubmit={addTask}>

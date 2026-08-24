@@ -204,6 +204,7 @@ export async function GET(request: Request) {
   return Response.json({
     generatedAt: now,
     user: { id: user.id, name: user.name, avatar: user.avatar, accent: user.accent },
+    isInitializer: profileResult.results[0]?.id === user.id,
     profiles,
     recentActivity: activityResult.results,
     date,
