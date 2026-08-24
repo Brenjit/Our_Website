@@ -4,6 +4,7 @@ import type { AnimationItem } from "lottie-web";
 import lottie from "lottie-web";
 import {
   BarChart3,
+  AlertTriangle,
   BookOpen,
   Briefcase,
   CalendarClock,
@@ -31,6 +32,7 @@ import {
   Square,
   Timer,
   Trophy,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -472,6 +474,8 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [pauseTask, setPauseTask] = useState<Task | null>(null);
   const [now, setNow] = useState<number | null>(null);
   const [completeToast, setCompleteToast] = useState("");
+  const [plannerToast, setPlannerToast] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Task | "all" | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftCategory, setDraftCategory] = useState<TaskCategory>("Study");
   const [draftSchedule, setDraftSchedule] = useState<TaskSchedule>("once");
@@ -513,6 +517,11 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     const timer = window.setTimeout(() => setCompleteToast(""), 2200);
     return () => window.clearTimeout(timer);
   }, [completeToast]);
+  useEffect(() => {
+    if (!plannerToast) return;
+    const timer = window.setTimeout(() => setPlannerToast(""), 2400);
+    return () => window.clearTimeout(timer);
+  }, [plannerToast]);
 
   const me = data?.profiles.find((profile) => profile.isCurrent);
   const partner = data?.profiles.find((profile) => !profile.isCurrent);
@@ -655,6 +664,24 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     }
   }
 
+  async function removeTasks() {
+    if (!deleteTarget) return;
+    const clearingAll = deleteTarget === "all";
+    setBusyId(clearingAll ? "delete-all" : `delete-${deleteTarget.id}`);
+    setError("");
+    try {
+      await api(clearingAll ? "/api/tasks" : `/api/tasks/${deleteTarget.id}`, { method: "DELETE" });
+      if (!clearingAll) closeEditTask();
+      setDeleteTarget(null);
+      setPlannerToast(clearingAll ? "Your task list is clear" : "Task removed from your planner");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t remove those tasks");
+    } finally {
+      setBusyId("");
+    }
+  }
+
   function startTaskDrag(taskId: string, event: ReactPointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -773,7 +800,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         </div>
 
         <aside className="premium-day-panel">
-          <div className="premium-day-head"><div><span className="premium-kicker">TODAY</span><h2>Your rhythm</h2></div><MiniProgress done={me.todayCompleted} total={me.totalToday} /></div>
+          <div className="premium-day-head"><div><span className="premium-kicker">TODAY</span><h2>Your rhythm</h2></div><div className="premium-day-controls"><button type="button" className="premium-clear-tasks" onClick={() => setDeleteTarget("all")} disabled={!plannerTasks.length || Boolean(me.busy)} aria-label="Clear all my tasks"><Trash2 size={13} /><span>Clear</span></button><MiniProgress done={me.todayCompleted} total={me.totalToday} /></div></div>
 
           <div className={`premium-partner-status ${partnerTask ? "is-busy" : ""}`}>
             <span className={`premium-avatar ${partner.accent}`}>{partner.avatar}<i /></span>
@@ -806,6 +833,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     </main>
 
     {completeToast && <div className="premium-complete-toast" role="status"><span><CircleCheck size={20} /></span><div><strong>Beautiful work.</strong><small>{completeToast} completed</small></div></div>}
+    {plannerToast && <div className="premium-planner-toast" role="status"><span><CircleCheck size={18} /></span><div><strong>Planner updated</strong><small>{plannerToast}</small></div></div>}
 
     {addOpen && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") closeAddTask(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) closeAddTask(); }}>
       <form className="premium-modal premium-task-modal" onSubmit={addTask}>
@@ -871,8 +899,18 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         </fieldset>
 
         <label className={`premium-field premium-date-field ${editSchedule === "once" ? "is-visible" : ""}`}>Scheduled date<input name="dateKey" type="date" value={editDate} onChange={(event) => setEditDate(event.target.value)} required /></label>
-        <p className="premium-edit-note"><LockKeyhole size={12} /> Previous completions, tracked minutes, and points stay unchanged.</p>
+        <div className="premium-edit-footer"><p className="premium-edit-note"><LockKeyhole size={12} /> Previous completions, tracked minutes, and points stay unchanged.</p><button type="button" className="premium-delete-task" onClick={() => setDeleteTarget(editTask)}><Trash2 size={13} /> Delete task</button></div>
       </form>
+    </div>}
+
+    {deleteTarget && <div className="premium-modal-backdrop premium-confirm-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }}>
+      <section className="premium-modal premium-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="premium-delete-title">
+        <span className="premium-confirm-icon"><AlertTriangle size={22} /></span>
+        <span className="premium-kicker">PLEASE CONFIRM</span>
+        <h2 id="premium-delete-title">{deleteTarget === "all" ? "Clear all your tasks?" : `Delete “${deleteTarget.title}”?`}</h2>
+        <p>{deleteTarget === "all" ? "This removes every task from your planner. Kaveri’s tasks are not affected." : "This removes the task from your planner."} Your previous scores and activity history will stay safe.</p>
+        <div className="premium-confirm-actions"><button type="button" onClick={() => setDeleteTarget(null)}>Keep tasks</button><button type="button" className="danger" onClick={() => void removeTasks()} disabled={busyId.startsWith("delete-")}><Trash2 size={14} /> {busyId.startsWith("delete-") ? "Removing…" : deleteTarget === "all" ? "Clear my tasks" : "Delete task"}</button></div>
+      </section>
     </div>}
 
     {pauseTask && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") setPauseTask(null); }} onMouseDown={(event) => { if (event.target === event.currentTarget) setPauseTask(null); }}>

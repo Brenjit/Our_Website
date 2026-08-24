@@ -60,3 +60,25 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return jsonError(error);
   }
 }
+
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser(request);
+  if (!user) return unauthorized();
+  try {
+    const { id } = await context.params;
+    const db = await ensureDatabase();
+    const task = await db.prepare(`SELECT t.id,
+        EXISTS(SELECT 1 FROM activity_sessions a WHERE a.task_id = t.id AND a.status = 'active') AS is_running
+      FROM tasks t WHERE t.id = ? AND t.owner_id = ? AND t.is_archived = 0`)
+      .bind(id, user.id)
+      .first<{ id: string; is_running: number }>();
+    if (!task) return Response.json({ error: "You can only delete your own tasks" }, { status: 403 });
+    if (task.is_running) return Response.json({ error: "Finish the running session before deleting this task" }, { status: 409 });
+    await db.prepare("UPDATE tasks SET is_archived = 1 WHERE id = ? AND owner_id = ?")
+      .bind(id, user.id)
+      .run();
+    return Response.json({ deleted: true });
+  } catch (error) {
+    return jsonError(error);
+  }
+}

@@ -56,3 +56,23 @@ export async function POST(request: Request) {
     return jsonError(error);
   }
 }
+
+export async function DELETE(request: Request) {
+  const user = await getSessionUser(request);
+  if (!user) return unauthorized();
+  try {
+    const db = await ensureDatabase();
+    const running = await db.prepare(`SELECT a.id FROM activity_sessions a
+      JOIN tasks t ON t.id = a.task_id
+      WHERE a.profile_id = ? AND t.owner_id = ? AND a.status = 'active' LIMIT 1`)
+      .bind(user.id, user.id)
+      .first<{ id: string }>();
+    if (running) return Response.json({ error: "Finish your running session before clearing your tasks" }, { status: 409 });
+    await db.prepare("UPDATE tasks SET is_archived = 1 WHERE owner_id = ? AND is_archived = 0")
+      .bind(user.id)
+      .run();
+    return Response.json({ cleared: true });
+  } catch (error) {
+    return jsonError(error);
+  }
+}
