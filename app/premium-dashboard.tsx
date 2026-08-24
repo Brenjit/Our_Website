@@ -853,10 +853,10 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
               <div className="premium-focus-orb" style={{ "--focus-progress": `${progress * 3.6}deg` } as CSSProperties}>
                 <div className="premium-focus-orb-inner">
                   {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} className={!displayedTask && /kaveri/i.test(me.name) ? "is-idle-nature" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
-                  <div className="premium-time-float">
-                    <strong>{timer?.label ?? formatCurrentClock(currentNow)}</strong>
-                    <small>{timer ? timer.overtime ? "OVERTIME" : timer.paused ? `${timer.pauseCategory} PAUSE` : "REMAINING" : plannedSchedule ? `${plannedSchedule.label} · ${plannedSchedule.detail}` : "CURRENT TIME"}</small>
-                  </div>
+                </div>
+                <div className="premium-time-float">
+                  <strong>{timer?.label ?? formatCurrentClock(currentNow)}</strong>
+                  <small>{timer ? timer.overtime ? "OVERTIME" : timer.paused ? `${timer.pauseCategory} PAUSE` : "REMAINING" : plannedSchedule ? `${plannedSchedule.label} · ${plannedSchedule.detail}` : "CURRENT TIME"}</small>
                 </div>
               </div>
             </div>
