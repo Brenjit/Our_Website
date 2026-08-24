@@ -812,7 +812,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
 
     <main className="premium-page">
       <header className="premium-topbar">
-        <div><span className="premium-mobile-logo"><Heart size={16} fill="currentColor" /> two.</span><p>{new Intl.DateTimeFormat("en", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</p></div>
+        <div className="premium-top-identity"><span className="premium-mobile-logo"><Heart size={16} fill="currentColor" /> <b>two.</b></span></div>
         <div className="premium-top-actions">
           <span className="premium-score-pill"><Flame size={15} fill="currentColor" /> {formatPoints(me.score)} pts</span>
           <button onClick={() => setAddOpen(true)}><Plus size={16} /> New task</button>
@@ -826,7 +826,11 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         <div className="premium-focus-column">
           <section className={`premium-focus-stage ${myTask ? "is-running" : "is-idle"} ${timer?.paused ? "is-paused" : ""} ${timer?.overtime ? "is-overtime" : ""}`}>
             <div className="premium-stage-head">
-              <div><span className="premium-kicker">{myTask ? timer?.paused ? "SESSION PAUSED" : "IN FOCUS" : plannedTask ? plannedSchedule?.phase === "now" ? "PLANNED RIGHT NOW" : plannedSchedule?.phase === "late" ? "NEEDS YOUR ATTENTION" : "UP NEXT" : "YOUR FOCUS SPACE"}</span><h1>{myTask ? myTask.title : plannedTask ? plannedTask.title : `Ready when you are, ${me.name}.`}</h1></div>
+              <div>
+                {(myTask || plannedTask) && <span className="premium-kicker">{myTask ? timer?.paused ? "SESSION PAUSED" : "IN FOCUS" : plannedSchedule?.phase === "now" ? "PLANNED RIGHT NOW" : plannedSchedule?.phase === "late" ? "NEEDS YOUR ATTENTION" : "UP NEXT"}</span>}
+                <h1>{myTask ? myTask.title : plannedTask ? plannedTask.title : <>Ready when you are,<br /><span>{me.name}.</span></>}</h1>
+                {!myTask && !plannedTask && <div className="premium-stage-datetime"><span><CalendarDays size={13} /> {new Intl.DateTimeFormat("en", { weekday: "long", day: "numeric", month: "long" }).format(new Date(currentNow))}</span><span><Clock3 size={13} /> {formatCurrentClock(currentNow)}</span></div>}
+              </div>
               {(myTask ?? plannedTask) && <span className={`premium-category-chip ${categorySlug((myTask ?? plannedTask)!.category)}`}><CategoryIcon category={(myTask ?? plannedTask)!.category} size={14} /> {(myTask ?? plannedTask)!.category}</span>}
             </div>
 
