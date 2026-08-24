@@ -559,8 +559,10 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const plannedSchedule = plannedTask ? scheduleState(plannedTask, currentNow) : null;
   const myKind = visualKind(myTask);
   const together = Boolean(myKind && partnerTask && myKind === visualKind(partnerTask) && (myKind === "study" || myKind === "cooking"));
-  const focusAnimation = lottieFor(myTask ?? plannedTask, me, together)
-    ?? (/kaveri/i.test(me.name) ? LOTTIES.natureFemale : LOTTIES.studyMale);
+  const displayedTask = myTask ?? plannedTask;
+  const focusAnimation = displayedTask
+    ? lottieFor(displayedTask, me, together)
+    : /kaveri/i.test(me.name) ? LOTTIES.natureFemale : LOTTIES.studyMale;
   const progress = myTask && timer && myTask.durationMinutes ? Math.min(100, Math.max(0, (timer.elapsedMinutes / myTask.durationMinutes) * 100)) : 0;
   const maxScore = Math.max(1, Math.abs(me.score), Math.abs(partner.score));
   const suggestion = suggestedKind(draftTitle, draftCategory);
@@ -609,7 +611,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             <div className="premium-focus-center">
               <div className="premium-focus-orb" style={{ "--focus-progress": `${progress * 3.6}deg` } as CSSProperties}>
                 <div className="premium-focus-orb-inner">
-                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} /> : <div className={`premium-fallback ${myTask ? categorySlug(myTask.category) : "study"}`}><span><CategoryIcon category={myTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
+                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} className={!displayedTask && /kaveri/i.test(me.name) ? "is-idle-nature" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
                   <div className="premium-time-float">
                     <strong>{timer?.label ?? formatCurrentClock(currentNow)}</strong>
                     <small>{timer ? timer.overtime ? "OVERTIME" : timer.paused ? `${timer.pauseCategory} PAUSE` : "REMAINING" : plannedSchedule ? `${plannedSchedule.label} · ${plannedSchedule.detail}` : "CURRENT TIME"}</small>
