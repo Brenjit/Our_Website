@@ -99,8 +99,8 @@ type DashboardData = {
 };
 
 const LOTTIES = {
-  studyMale: "/Lotties/study%20planning.json",
-  studyFemale: "/Lotties/Study.json",
+  studyMale: "/Lotties/Study.json",
+  studyFemale: "/Lotties/study%20girl.json",
   studyTogether: "/Lotties/Study%20discussion%20both.json",
   cooking: "/Lotties/Cooking.json",
   cookingTogether: "/Lotties/cooking%20together.json",
@@ -357,7 +357,7 @@ function lottieFor(task: Task | null | undefined, profile: PublicProfile, togeth
   const kind = visualKind(task);
   if (kind === "cooking") return together ? LOTTIES.cookingTogether : LOTTIES.cooking;
   if (kind === "study") return together ? LOTTIES.studyTogether : profile.accent === "coral" ? LOTTIES.studyFemale : LOTTIES.studyMale;
-  if (kind === "planning") return LOTTIES.studyMale;
+  if (kind === "planning") return profile.accent === "coral" ? LOTTIES.studyFemale : LOTTIES.studyMale;
   return null;
 }
 
@@ -722,13 +722,14 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const focusAnimation = displayedTask
     ? lottieFor(displayedTask, me, together)
     : /kaveri/i.test(me.name) ? LOTTIES.natureFemale : LOTTIES.studyMale;
+  const partnerAnimation = partnerTask ? lottieFor(partnerTask, partner, false) : null;
   const progress = myTask && timer && myTask.durationMinutes ? Math.min(100, Math.max(0, (timer.elapsedMinutes / myTask.durationMinutes) * 100)) : 0;
   const maxScore = Math.max(1, Math.abs(me.score), Math.abs(partner.score));
   const suggestion = suggestedKind(draftTitle, draftCategory);
   const suggestedAnimation = suggestion === "cooking"
     ? LOTTIES.cooking
     : suggestion === "study" ? me.accent === "coral" ? LOTTIES.studyFemale : LOTTIES.studyMale
-      : suggestion === "planning" ? LOTTIES.studyMale : null;
+      : suggestion === "planning" ? me.accent === "coral" ? LOTTIES.studyFemale : LOTTIES.studyMale : null;
   const focusStudy = me.focusMinutes.study + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Study" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
   const focusProductive = me.focusMinutes.productive + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Productive" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
   const weekdayName = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date());
@@ -769,6 +770,19 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             </div>
 
             {together && <div className="premium-together-pill"><Users size={14} /><span><b>You’re doing this together</b>{partner.name} is focused on {partnerTask?.title}</span><div><span className={`premium-avatar ${me.accent}`}>{me.avatar}</span><span className={`premium-avatar ${partner.accent}`}>{partner.avatar}</span></div></div>}
+
+            {partnerTask && partnerTimer && <aside className={`premium-partner-focus accent-${partner.accent} ${partnerTimer.paused ? "is-paused" : ""}`} aria-label={`${partner.name} is working on ${partnerTask.title}`}>
+              <div className="premium-partner-focus-visual">
+                {partnerAnimation ? <LottieMotion src={partnerAnimation} paused={partnerTimer.paused} /> : <span className={`premium-fallback-mini ${categorySlug(partnerTask.category)}`}><CategoryIcon category={partnerTask.category} size={26} /></span>}
+              </div>
+              <div className="premium-partner-focus-copy">
+                <span><i /> {partnerTimer.paused ? "PARTNER PAUSED" : "PARTNER IN FOCUS"}</span>
+                <strong>{partner.name}</strong>
+                <p>{partnerTask.title}</p>
+                <small><CategoryIcon category={partnerTask.category} size={10} /> {partnerTask.category}</small>
+              </div>
+              <b className={partnerTimer.overtime ? "is-overtime" : ""}>{partnerTimer.label}</b>
+            </aside>}
 
             <div className="premium-focus-center">
               <div className="premium-focus-orb" style={{ "--focus-progress": `${progress * 3.6}deg` } as CSSProperties}>
