@@ -107,6 +107,7 @@ const LOTTIES = {
   cooking: "/Lotties/Cooking.json",
   cookingTogether: "/Lotties/cooking%20together.json",
   natureFemale: "/Lotties/Reading%20in%20nature%20GIRL%20(default).json",
+  sunrise: "/Lotties/sunrise.json",
 } as const;
 
 const todayKey = () => {
@@ -733,7 +734,11 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     void persistTaskOrder(next);
   }
 
-  if (!data || !me || !partner) return <main className="premium-loading"><span><Heart size={25} fill="currentColor" /></span><p>{error || "Preparing your day…"}</p></main>;
+  if (!data || !me || !partner) return <main className="premium-loading">
+    <div className="premium-loading-blobs" aria-hidden="true"><i /><i /><i /></div>
+    <span className="premium-loading-heart"><Heart size={27} fill="currentColor" /></span>
+    <div className="premium-loading-copy"><strong>two.</strong><p>{error || "Preparing your day…"}</p></div>
+  </main>;
 
   const currentNow = now ?? Date.parse(data.generatedAt);
   const myTask = me.busy ? me.tasks.find((task) => task.id === me.busy!.taskId) ?? null : null;
@@ -751,9 +756,11 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const myKind = visualKind(myTask);
   const together = Boolean(myKind && partnerTask && myKind === visualKind(partnerTask) && (myKind === "study" || myKind === "cooking"));
   const displayedTask = myTask ?? plannedTask;
+  const currentHour = new Date(currentNow).getHours();
+  const isMorning = currentHour >= 5 && currentHour < 11;
   const focusAnimation = displayedTask
     ? lottieFor(displayedTask, me, together)
-    : isKaveri(me) ? LOTTIES.natureFemale : LOTTIES.studyMale;
+    : isMorning ? LOTTIES.sunrise : isKaveri(me) ? LOTTIES.natureFemale : LOTTIES.studyMale;
   const partnerAnimation = partnerTask ? lottieFor(partnerTask, partner, false) : null;
   const progress = myTask && timer && myTask.durationMinutes ? Math.min(100, Math.max(0, (timer.elapsedMinutes / myTask.durationMinutes) * 100)) : 0;
   const maxScore = Math.max(1, Math.abs(me.score), Math.abs(partner.score));
@@ -823,7 +830,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             <div className="premium-focus-center">
               <div className="premium-focus-orb" style={{ "--focus-progress": `${progress * 3.6}deg` } as CSSProperties}>
                 <div className="premium-focus-orb-inner">
-                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} cover={!displayedTask && isKaveri(me)} className={!displayedTask && isKaveri(me) ? "is-idle-nature" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
+                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} cover={!displayedTask && (isMorning || isKaveri(me))} className={!displayedTask ? isMorning ? "is-idle-sunrise" : isKaveri(me) ? "is-idle-nature" : "" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
                 </div>
                 <div className="premium-time-float">
                   <strong>{timer?.label ?? formatCurrentClock(currentNow)}</strong>
