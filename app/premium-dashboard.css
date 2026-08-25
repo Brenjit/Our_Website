@@ -92,7 +92,7 @@
 .premium-lottie-loader { position: absolute; z-index: 0; width: 55%; aspect-ratio: 1; border-radius: 42% 58% 54% 46%; background: linear-gradient(120deg,#edf5f1,#dff1e8,#edf5f1); background-size: 200% 100%; animation: premium-shimmer 1.2s linear infinite; }
 @keyframes premium-shimmer { to { background-position: -200% 0; } }
 .premium-time-float { position: absolute; z-index: 6; left: 50%; bottom: 0; min-width: 145px; padding: 8px 14px; border-radius: 15px; background: rgba(255,255,255,.92); backdrop-filter: blur(14px); border: 1px solid rgba(214,230,222,.92); display: grid; justify-items: center; box-shadow: 0 10px 30px rgba(33,73,59,.1); transform: translate(-50%,50%); }
-.premium-lottie.is-idle-nature { width: 72%; height: 58%; transform: translateY(-12%); border-radius: 22%; overflow: hidden; }
+.premium-lottie.is-idle-nature { width: 100%; height: 100%; transform: none; border-radius: 50%; overflow: hidden; }
 .premium-time-float strong { font-variant-numeric: tabular-nums; letter-spacing: -.04em; font-size: 24px; }
 .premium-time-float small { color: var(--p-green); font-size: 7px; font-weight: 850; letter-spacing: .16em; margin-top: 2px; }
 .is-overtime .premium-time-float strong, .is-overtime .premium-time-float small { color: var(--p-red); }

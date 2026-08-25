@@ -363,7 +363,7 @@ function lottieFor(task: Task | null | undefined, profile: PublicProfile, togeth
   return null;
 }
 
-function LottieMotion({ src, paused = false, className = "" }: { src: string; paused?: boolean; className?: string }) {
+function LottieMotion({ src, paused = false, cover = false, className = "" }: { src: string; paused?: boolean; cover?: boolean; className?: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const animationRef = useRef<AnimationItem | null>(null);
   const [loadedSrc, setLoadedSrc] = useState("");
@@ -385,7 +385,7 @@ function LottieMotion({ src, paused = false, className = "" }: { src: string; pa
           loop: true,
           autoplay: !paused,
           animationData,
-          rendererSettings: { preserveAspectRatio: "xMidYMid meet" },
+          rendererSettings: { preserveAspectRatio: cover ? "xMidYMid slice" : "xMidYMid meet" },
         });
         animation.addEventListener("DOMLoaded", () => setLoadedSrc(src));
         animationRef.current = animation;
@@ -399,8 +399,8 @@ function LottieMotion({ src, paused = false, className = "" }: { src: string; pa
       animationRef.current = null;
       container.replaceChildren();
     };
-  }, [src, paused]);
-  return <div className={`premium-lottie ${paused ? "is-paused" : ""} ${className}`}>
+  }, [src, paused, cover]);
+  return <div className={`premium-lottie ${paused ? "is-paused" : ""} ${cover ? "is-cover" : ""} ${className}`}>
     <div ref={containerRef} className="premium-lottie-canvas" />
     {loadedSrc !== src && failedSrc !== src && <span className="premium-lottie-loader" />}
     {failedSrc === src && <span className="premium-lottie-error"><Sparkles size={34} /><small>Animation unavailable</small></span>}
@@ -852,7 +852,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             <div className="premium-focus-center">
               <div className="premium-focus-orb" style={{ "--focus-progress": `${progress * 3.6}deg` } as CSSProperties}>
                 <div className="premium-focus-orb-inner">
-                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} className={!displayedTask && /kaveri/i.test(me.name) ? "is-idle-nature" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
+                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} cover={!displayedTask && /kaveri/i.test(me.name)} className={!displayedTask && /kaveri/i.test(me.name) ? "is-idle-nature" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
                 </div>
                 <div className="premium-time-float">
                   <strong>{timer?.label ?? formatCurrentClock(currentNow)}</strong>
