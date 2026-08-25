@@ -1801,6 +1801,15 @@
   overflow: hidden;
 }
 
+/* iOS zooms the viewport when a focused form control renders below 16px. */
+@media (max-width: 620px) {
+  .premium-app input:not([type="hidden"]),
+  .premium-app select,
+  .premium-app textarea {
+    font-size: 16px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .premium-loading-blobs i,
   .premium-loading > .premium-loading-heart { animation: none; }
