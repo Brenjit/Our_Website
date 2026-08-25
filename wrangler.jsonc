@@ -2,6 +2,8 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "twogether-brenjit-kaveri",
   "main": "dist/server/index.js",
+  "workers_dev": true,
+  "preview_urls": false,
   "compatibility_date": "2026-08-25",
   "compatibility_flags": ["nodejs_compat"],
   "no_bundle": true,
