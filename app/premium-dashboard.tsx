@@ -216,13 +216,38 @@ function TimeWheel({ label, values, selected, onSelect }: {
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const scrollTimerRef = useRef<number | null>(null);
+  const unlockTimerRef = useRef<number | null>(null);
+  const programmaticScrollRef = useRef(false);
+
+  const centerButton = useCallback((button: HTMLButtonElement, behavior: ScrollBehavior) => {
+    const list = listRef.current;
+    if (!list) return;
+    programmaticScrollRef.current = true;
+    list.scrollTo({
+      top: button.offsetTop - (list.clientHeight - button.clientHeight) / 2,
+      behavior,
+    });
+    if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
+    unlockTimerRef.current = window.setTimeout(() => { programmaticScrollRef.current = false; }, behavior === "smooth" ? 220 : 0);
+  }, []);
+
   useEffect(() => {
     const list = listRef.current;
-    const selectedButton = list?.querySelector<HTMLElement>("[aria-selected='true']");
-    if (list && selectedButton) list.scrollTo({ top: selectedButton.offsetTop - list.clientHeight / 2 + selectedButton.clientHeight / 2, behavior: "smooth" });
-  }, [selected]);
-  useEffect(() => () => { if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current); }, []);
+    const selectedButton = list?.querySelector<HTMLButtonElement>("[aria-selected='true']");
+    if (selectedButton) centerButton(selectedButton, "auto");
+  }, [centerButton]);
+
+  useEffect(() => () => {
+    if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current);
+    if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
+  }, []);
+
   function handleScroll() {
+    if (programmaticScrollRef.current) {
+      if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
+      unlockTimerRef.current = window.setTimeout(() => { programmaticScrollRef.current = false; }, 90);
+      return;
+    }
     if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current);
     scrollTimerRef.current = window.setTimeout(() => {
       const list = listRef.current;
@@ -236,11 +261,13 @@ function TimeWheel({ label, values, selected, onSelect }: {
         return Math.abs(buttonCenter - center) < Math.abs(closestCenter - center) ? button : closest;
       }, null);
       const nextValue = nearest?.dataset.timeValue;
-      if (nextValue && nextValue !== selected) onSelect(nextValue);
-    }, 110);
+      if (!nearest || !nextValue) return;
+      if (nextValue !== selected) onSelect(nextValue);
+      centerButton(nearest, "smooth");
+    }, 80);
   }
   return <div className="premium-time-wheel"><span>{label}</span><div ref={listRef} role="listbox" aria-label={label} onScroll={handleScroll}>
-    {values.map((value) => <button type="button" role="option" data-time-value={value} aria-selected={selected === value} key={value} onClick={() => onSelect(value)}>{value}</button>)}
+    {values.map((value) => <button type="button" role="option" data-time-value={value} aria-selected={selected === value} key={value} onClick={(event) => { onSelect(value); centerButton(event.currentTarget, "smooth"); }}>{value}</button>)}
   </div></div>;
 }
 
@@ -249,16 +276,13 @@ function TimePicker({ value, onChange, onClose }: { value: string; onChange: (va
   const update = (next: Partial<{ hour12: number; minute: number; period: "AM" | "PM" }>) => onChange(timeValue(next.hour12 ?? hour12, next.minute ?? minute, next.period ?? period));
 
   return <section className="premium-time-picker" role="dialog" aria-label="Choose task start time">
-    <header>
-      <div><small>SLIDE TO SET START TIME</small><strong>{formatClockTime(value)}</strong></div>
-      <span className="premium-time-picker-hint"><Repeat2 size={13} /> Scroll each column</span>
-    </header>
+    <header><strong>{formatClockTime(value)}</strong></header>
     <div className="premium-time-wheels">
       <TimeWheel label="Hour" values={Array.from({ length: 12 }, (_, index) => String(index + 1))} selected={String(hour12)} onSelect={(next) => update({ hour12: Number(next) })} />
       <TimeWheel label="Minute" values={Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0"))} selected={String(minute).padStart(2, "0")} onSelect={(next) => update({ minute: Number(next) })} />
       <TimeWheel label="AM / PM" values={["AM", "PM"]} selected={period} onSelect={(next) => update({ period: next as "AM" | "PM" })} />
     </div>
-    <footer><span><Clock3 size={13} /> Local time</span><button type="button" onClick={onClose}><Check size={14} /> Done</button></footer>
+    <footer><button type="button" onClick={onClose}><Check size={14} /> Done</button></footer>
   </section>;
 }
 
@@ -943,7 +967,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
 
         {timePickerOpen && <TimePicker value={draftTime} onChange={setDraftTime} onClose={() => setTimePickerOpen(false)} />}
 
-        <div className="premium-time-note"><Clock3 size={15} /><span><strong>Scheduled for {formatClockTime(draftTime)}</strong><small>The live dashboard will mark this upcoming, happening now, or late using your current local time.</small></span></div>
+        <div className="premium-time-note"><Clock3 size={15} /><span><strong>Scheduled for {formatClockTime(draftTime)}</strong></span></div>
 
         <fieldset className="premium-schedule"><legend>Repeat</legend><input type="hidden" name="scheduleType" value={draftSchedule} /><input type="hidden" name="dateKey" value={todayKey()} />
           {([
@@ -978,7 +1002,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
 
         {editTimePickerOpen && <TimePicker value={editTime} onChange={setEditTime} onClose={() => setEditTimePickerOpen(false)} />}
 
-        <div className="premium-time-note premium-reschedule-note"><CalendarClock size={15} /><span><strong>Moves to {formatClockTime(editTime)}</strong><small>The focus screen and “Now / Late” status update immediately from your local time.</small></span></div>
+        <div className="premium-time-note premium-reschedule-note"><CalendarClock size={15} /><span><strong>Moves to {formatClockTime(editTime)}</strong></span></div>
 
         <fieldset className="premium-schedule"><legend>Repeat</legend><input type="hidden" name="scheduleType" value={editSchedule} />
           {([

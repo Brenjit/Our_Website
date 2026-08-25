@@ -714,11 +714,8 @@
   animation: premium-time-picker-in .36s cubic-bezier(.18,.88,.24,1.06) both;
   overflow: hidden;
 }
-.premium-time-picker > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.premium-time-picker > header > div:first-child { display: grid; gap: 4px; }
-.premium-time-picker > header small { color: var(--p-green); font-size: 7px; font-weight: 850; letter-spacing: .16em; }
+.premium-time-picker > header { display: flex; align-items: center; justify-content: center; min-height: 33px; }
 .premium-time-picker > header strong { color: #f5f8f6; font-size: 23px; line-height: 1; letter-spacing: -.04em; }
-.premium-time-picker-hint { min-height: 31px; padding: 0 10px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; color: #78827d; background: rgba(255,255,255,.035); display: inline-flex; align-items: center; gap: 6px; font-size: 7px; font-weight: 730; }
 .premium-time-period { padding: 3px; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; background: rgba(0,0,0,.2); display: grid; grid-template-columns: 1fr 1fr; }
 .premium-time-period button { width: 44px; height: 31px; border: 0; border-radius: 9px; color: #737d78; background: transparent; cursor: pointer; font-size: 8px; font-weight: 800; }
 .premium-time-period button.selected { color: #07120c; background: var(--p-green); box-shadow: 0 7px 18px rgba(85,237,139,.14); }
@@ -742,14 +739,13 @@
 .premium-time-wheels { height: 246px; padding: 16px 5px 8px; display: grid; grid-template-columns: 1fr 1fr .8fr; gap: 8px; animation: premium-picker-mode-in .28s ease both; }
 .premium-time-wheel { min-width: 0; display: grid; grid-template-rows: auto 1fr; gap: 7px; }
 .premium-time-wheel > span { color: #78827d; text-align: center; font-size: 7px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-.premium-time-wheel > div { min-height: 0; padding-block: 80px; border: 1px solid rgba(255,255,255,.075); border-radius: 15px; background: rgba(0,0,0,.17); overflow-y: auto; scroll-snap-type: y mandatory; scroll-behavior: smooth; scrollbar-width: none; mask-image: linear-gradient(to bottom,transparent,#000 28%,#000 72%,transparent); }
+.premium-time-wheel > div { position: relative; min-height: 0; padding-block: 80px; border: 1px solid rgba(255,255,255,.075); border-radius: 15px; background: rgba(0,0,0,.17); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scroll-snap-type: y mandatory; scroll-behavior: auto; scrollbar-width: none; mask-image: linear-gradient(to bottom,transparent,#000 28%,#000 72%,transparent); }
 .premium-time-wheel > div::-webkit-scrollbar { display: none; }
 .premium-time-wheel button { width: calc(100% - 10px); height: 38px; margin: 2px 5px; border: 0; border-radius: 10px; color: #707a75; background: transparent; scroll-snap-align: center; cursor: pointer; font-size: 11px; font-weight: 710; font-variant-numeric: tabular-nums; }
 .premium-time-wheel button[aria-selected="true"] { color: #07120c; background: var(--p-green); box-shadow: 0 8px 20px rgba(85,237,139,.15); transform: scale(1.02); }
 .premium-time-wheel button:hover:not([aria-selected="true"]) { color: #dce5e0; background: rgba(255,255,255,.04); }
 
-.premium-time-picker > footer { padding-top: 12px; border-top: 1px solid rgba(255,255,255,.075); display: flex; align-items: center; justify-content: space-between; }
-.premium-time-picker > footer > span { color: #727c77; display: inline-flex; align-items: center; gap: 5px; font-size: 7px; }
+.premium-time-picker > footer { padding-top: 12px; border-top: 1px solid rgba(255,255,255,.075); display: flex; align-items: center; justify-content: flex-end; }
 .premium-time-picker > footer > button { height: 35px; border: 1px solid rgba(85,237,139,.34); border-radius: 11px; padding: 0 13px; color: #eafff1; background: rgba(85,237,139,.13); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 8px; font-weight: 780; }
 .premium-time-picker > footer > button:hover { border-color: rgba(85,237,139,.58); background: rgba(85,237,139,.2); transform: translateY(-1px); }
 
@@ -1094,7 +1090,6 @@
   box-shadow: 0 24px 65px rgba(65,79,104,.2),inset 0 1px 0 #fff;
 }
 .premium-time-picker > header strong { color: #1b2721; }
-.premium-time-picker-hint { border-color: rgba(255,255,255,.82); color: #64736b; background: rgba(255,255,255,.4); box-shadow: inset 0 1px 0 rgba(255,255,255,.9); }
 .premium-time-period,
 .premium-picker-tabs,
 .premium-time-wheel > div { border-color: rgba(255,255,255,.84); background: rgba(255,255,255,.42); box-shadow: inset 0 1px 0 rgba(255,255,255,.85); }
@@ -1120,8 +1115,7 @@
 }
 .premium-clock-dial > button:hover { color: #126d4a; background: rgba(217,248,233,.68); }
 .premium-clock-pin { border-color: rgba(255,255,255,.9); }
-.premium-time-wheel > span,
-.premium-time-picker > footer > span { color: #74817b; }
+.premium-time-wheel > span { color: #74817b; }
 .premium-time-wheel button:hover:not([aria-selected="true"]) { color: #1c2b24; background: rgba(255,255,255,.52); }
 .premium-time-picker > footer { border-color: rgba(92,111,102,.13); }
 .premium-time-picker > footer > button { border-color: rgba(35,184,120,.36); color: #126e4b; background: rgba(216,248,232,.72); }
