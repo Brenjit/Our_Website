@@ -101,7 +101,7 @@ type DashboardData = {
 };
 
 const LOTTIES = {
-  studyMale: "/Lotties/Study.json",
+  studyMale: "/Lotties/Study_boy.json",
   studyFemale: "/Lotties/Reading%20girl.json",
   studyTogether: "/Lotties/Study%20discussion%20both.json",
   cooking: "/Lotties/Cooking.json",
