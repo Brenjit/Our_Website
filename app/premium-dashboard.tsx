@@ -244,52 +244,19 @@ function TimeWheel({ label, values, selected, onSelect }: {
 }
 
 function TimePicker({ value, onChange, onClose }: { value: string; onChange: (value: string) => void; onClose: () => void }) {
-  const [pickerMode, setPickerMode] = useState<"dial" | "wheels">("dial");
-  const [dialFace, setDialFace] = useState<"hour" | "minute">("hour");
   const { hour12, minute, period } = timeParts(value);
-  const dialValues = dialFace === "hour" ? Array.from({ length: 12 }, (_, index) => index + 1) : Array.from({ length: 12 }, (_, index) => index * 5);
-  const selectedDialValue = dialFace === "hour" ? hour12 : Math.round(minute / 5) * 5 % 60;
-  const handAngle = dialFace === "hour" ? hour12 * 30 : minute * 6;
   const update = (next: Partial<{ hour12: number; minute: number; period: "AM" | "PM" }>) => onChange(timeValue(next.hour12 ?? hour12, next.minute ?? minute, next.period ?? period));
 
   return <section className="premium-time-picker" role="dialog" aria-label="Choose task start time">
     <header>
-      <div><small>START TIME</small><strong>{formatClockTime(value)}</strong></div>
-      <div className="premium-time-period" aria-label="AM or PM">
-        {(["AM", "PM"] as const).map((choice) => <button type="button" key={choice} className={period === choice ? "selected" : ""} onClick={() => update({ period: choice })}>{choice}</button>)}
-      </div>
+      <div><small>SLIDE TO SET START TIME</small><strong>{formatClockTime(value)}</strong></div>
+      <span className="premium-time-picker-hint"><Repeat2 size={13} /> Scroll each column</span>
     </header>
-    <div className="premium-picker-tabs" role="tablist" aria-label="Time input style">
-      <button type="button" role="tab" aria-selected={pickerMode === "dial"} onClick={() => setPickerMode("dial")}><Clock3 size={13} /> Clock</button>
-      <button type="button" role="tab" aria-selected={pickerMode === "wheels"} onClick={() => setPickerMode("wheels")}><Repeat2 size={13} /> Scroll</button>
-    </div>
-
-    {pickerMode === "dial" ? <div className="premium-clock-picker">
-      <div className="premium-clock-faces">
-        <button type="button" className={dialFace === "hour" ? "active" : ""} onClick={() => setDialFace("hour")}>{String(hour12).padStart(2, "0")}</button><span>:</span><button type="button" className={dialFace === "minute" ? "active" : ""} onClick={() => setDialFace("minute")}>{String(minute).padStart(2, "0")}</button>
-      </div>
-      <div className="premium-clock-dial" style={{ "--clock-hand": `${handAngle}deg` } as CSSProperties}>
-        <span className="premium-clock-hand" />
-        <i className="premium-clock-pin" />
-        {dialValues.map((number, index) => {
-          const angle = index * 30 * Math.PI / 180;
-          return <button
-            type="button"
-            key={number}
-            className={selectedDialValue === number ? "selected" : ""}
-            style={{ left: `${50 + Math.sin(angle) * 38}%`, top: `${50 - Math.cos(angle) * 38}%` }}
-            onClick={() => {
-              if (dialFace === "hour") { update({ hour12: number }); setDialFace("minute"); }
-              else update({ minute: number });
-            }}
-          >{dialFace === "minute" ? String(number).padStart(2, "0") : number}</button>;
-        })}
-      </div>
-    </div> : <div className="premium-time-wheels">
+    <div className="premium-time-wheels">
       <TimeWheel label="Hour" values={Array.from({ length: 12 }, (_, index) => String(index + 1))} selected={String(hour12)} onSelect={(next) => update({ hour12: Number(next) })} />
       <TimeWheel label="Minute" values={Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0"))} selected={String(minute).padStart(2, "0")} onSelect={(next) => update({ minute: Number(next) })} />
-      <TimeWheel label="Period" values={["AM", "PM"]} selected={period} onSelect={(next) => update({ period: next as "AM" | "PM" })} />
-    </div>}
+      <TimeWheel label="AM / PM" values={["AM", "PM"]} selected={period} onSelect={(next) => update({ period: next as "AM" | "PM" })} />
+    </div>
     <footer><span><Clock3 size={13} /> Local time</span><button type="button" onClick={onClose}><Check size={14} /> Done</button></footer>
   </section>;
 }
@@ -963,8 +930,8 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         <label className="premium-field">Task name<input name="title" value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} placeholder="Study calculus, cook dinner…" maxLength={80} required /></label>
         <div className="premium-form-grid">
           <label className="premium-field">Category<select name="category" value={draftCategory} onChange={(event) => setDraftCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
-          <label className="premium-field">Focus duration<input name="durationMinutes" type="number" min="0" max="240" defaultValue="25" /><span>minutes</span></label>
           <div className="premium-field"><b className="premium-field-name">Start time</b><input name="scheduledTime" type="hidden" value={draftTime} /><button className="premium-time-trigger" type="button" onClick={() => setTimePickerOpen((open) => !open)} aria-expanded={timePickerOpen}><Clock3 size={15} /><span>{formatClockTime(draftTime)}</span><ChevronDown size={14} /></button></div>
+          <label className="premium-field">Focus duration<input name="durationMinutes" type="number" min="0" max="240" defaultValue="25" /><span>minutes</span></label>
         </div>
 
         {timePickerOpen && <TimePicker value={draftTime} onChange={setDraftTime} onClose={() => setTimePickerOpen(false)} />}
@@ -998,8 +965,8 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         <label className="premium-field">Task name<input name="title" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={80} required /></label>
         <div className="premium-form-grid">
           <label className="premium-field">Category<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
-          <label className="premium-field">Focus duration<input name="durationMinutes" type="number" min="0" max="240" value={editDuration} onChange={(event) => setEditDuration(event.target.value)} /><span>minutes</span></label>
           <div className="premium-field"><b className="premium-field-name">Start time</b><input name="scheduledTime" type="hidden" value={editTime} /><button className="premium-time-trigger" type="button" onClick={() => setEditTimePickerOpen((open) => !open)} aria-expanded={editTimePickerOpen}><Clock3 size={15} /><span>{formatClockTime(editTime)}</span><ChevronDown size={14} /></button></div>
+          <label className="premium-field">Focus duration<input name="durationMinutes" type="number" min="0" max="240" value={editDuration} onChange={(event) => setEditDuration(event.target.value)} /><span>minutes</span></label>
         </div>
 
         {editTimePickerOpen && <TimePicker value={editTime} onChange={setEditTime} onClose={() => setEditTimePickerOpen(false)} />}
