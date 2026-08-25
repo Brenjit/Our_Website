@@ -475,6 +475,8 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [pinMessage, setPinMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const playedTimerCuesRef = useRef<Set<string>>(new Set());
+  const finishAlarmRef = useRef<{ sessionId: string; intervalId: number } | null>(null);
+  const silencedAlarmSessionRef = useRef("");
 
   const prepareTimerAudio = useCallback(() => {
     if (typeof window === "undefined") return null;
@@ -490,6 +492,21 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     if (!context) return;
     soundTimerCue(context, cue);
   }, [prepareTimerAudio]);
+
+  const stopFinishAlarm = useCallback(() => {
+    if (!finishAlarmRef.current) return;
+    window.clearInterval(finishAlarmRef.current.intervalId);
+    finishAlarmRef.current = null;
+    if ("vibrate" in navigator) navigator.vibrate(0);
+  }, []);
+
+  const startFinishAlarm = useCallback((sessionId: string) => {
+    if (finishAlarmRef.current?.sessionId === sessionId) return;
+    stopFinishAlarm();
+    playTimerCue("finish");
+    const intervalId = window.setInterval(() => playTimerCue("finish"), 2100);
+    finishAlarmRef.current = { sessionId, intervalId };
+  }, [playTimerCue, stopFinishAlarm]);
 
   const load = useCallback(async () => {
     try {
@@ -516,11 +533,12 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     return () => {
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
+      stopFinishAlarm();
       const context = audioContextRef.current;
       audioContextRef.current = null;
       if (context && context.state !== "closed") void context.close();
     };
-  }, [prepareTimerAudio]);
+  }, [prepareTimerAudio, stopFinishAlarm]);
   useEffect(() => {
     if (!completeToast) return;
     const timer = window.setTimeout(() => setCompleteToast(""), 2200);
@@ -543,19 +561,22 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   }, [me, partner]);
 
   useEffect(() => {
-    if (!audibleTask?.activeSession || !audibleTimer || audibleTimer.paused) return;
+    if (!audibleTask?.activeSession || !audibleTimer) {
+      stopFinishAlarm();
+      return;
+    }
     const sessionId = audibleTask.activeSession.id;
     const warningKey = `${sessionId}:warning`;
-    const finishKey = `${sessionId}:finish`;
-    if (audibleTimer.remainingSeconds > 0 && audibleTimer.remainingSeconds <= 10 && !playedTimerCuesRef.current.has(warningKey)) {
+    if (audibleTimer.remainingSeconds <= 0) {
+      if (silencedAlarmSessionRef.current !== sessionId) startFinishAlarm(sessionId);
+      return;
+    }
+    stopFinishAlarm();
+    if (!audibleTimer.paused && audibleTimer.remainingSeconds <= 10 && !playedTimerCuesRef.current.has(warningKey)) {
       playedTimerCuesRef.current.add(warningKey);
       playTimerCue("warning");
     }
-    if (audibleTimer.remainingSeconds <= 0 && !playedTimerCuesRef.current.has(finishKey)) {
-      playedTimerCuesRef.current.add(finishKey);
-      playTimerCue("finish");
-    }
-  }, [audibleTask, audibleTimer, playTimerCue]);
+  }, [audibleTask, audibleTimer, playTimerCue, startFinishAlarm, stopFinishAlarm]);
 
   const persistTaskOrder = useCallback(async (orderedIds: string[]) => {
     try {
@@ -601,6 +622,12 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
 
   async function taskAction(task: Task, action: "toggle" | "start" | "finish" | "resume") {
     if (action === "start" || action === "resume" || action === "finish") prepareTimerAudio();
+    const sessionId = task.activeSession?.id ?? "";
+    if (action === "start") silencedAlarmSessionRef.current = "";
+    if (action === "finish" && sessionId) {
+      silencedAlarmSessionRef.current = sessionId;
+      stopFinishAlarm();
+    }
     setBusyId(task.id);
     setError("");
     try {
@@ -608,16 +635,14 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
       if (action === "start" || action === "resume") setActiveTab("home");
       if (action === "start") playTimerCue("start");
       if (action === "resume") playTimerCue("resume");
-      if (action === "finish") {
-        const finishKey = task.activeSession ? `${task.activeSession.id}:finish` : "";
-        if (!finishKey || !playedTimerCuesRef.current.has(finishKey)) {
-          if (finishKey) playedTimerCuesRef.current.add(finishKey);
-          playTimerCue("finish");
-        }
-      }
       if (action === "finish" || (action === "toggle" && !task.completedAt)) setCompleteToast(task.title);
       await load();
     } catch (err) {
+      if (action === "finish" && sessionId) {
+        silencedAlarmSessionRef.current = "";
+        const timerAtFailure = countdownState(task, Date.now());
+        if (timerAtFailure && timerAtFailure.remainingSeconds <= 0) startFinishAlarm(sessionId);
+      }
       setError(err instanceof Error ? err.message : "Couldn’t update that routine");
     } finally {
       setBusyId("");
