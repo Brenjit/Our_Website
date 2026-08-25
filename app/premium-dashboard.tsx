@@ -42,6 +42,54 @@ type TaskCategory = "Study" | "Productive" | "Entertainment" | "Daily essentials
 type TaskSchedule = "once" | "daily" | "weekdays" | "weekly";
 const TASK_CATEGORIES: TaskCategory[] = ["Study", "Productive", "Entertainment", "Daily essentials"];
 const DURATION_PRESETS = [5, 10, 15, 30, 45, 60] as const;
+type TimerCue = "start" | "resume" | "warning" | "finish";
+
+const TIMER_CUE_PATTERNS: Record<TimerCue, Array<[delay: number, frequency: number, duration: number]>> = {
+  start: [[0, 523, 0.16], [0.13, 659, 0.18], [0.28, 784, 0.28]],
+  resume: [[0, 587, 0.14], [0.14, 784, 0.24]],
+  warning: [[0, 880, 0.15], [0.2, 880, 0.15], [0.4, 988, 0.22]],
+  finish: [[0, 784, 0.2], [0.18, 988, 0.2], [0.36, 1175, 0.42], [0.86, 784, 0.18], [1.04, 988, 0.2], [1.23, 1318, 0.56]],
+};
+
+function soundTimerCue(context: AudioContext, cue: TimerCue) {
+  const pattern = TIMER_CUE_PATTERNS[cue];
+  const startsAt = context.currentTime + 0.025;
+  const master = context.createGain();
+  const compressor = context.createDynamicsCompressor();
+  master.gain.setValueAtTime(cue === "finish" ? 0.48 : cue === "warning" ? 0.4 : 0.34, startsAt);
+  compressor.threshold.setValueAtTime(-12, startsAt);
+  compressor.knee.setValueAtTime(12, startsAt);
+  compressor.ratio.setValueAtTime(8, startsAt);
+  master.connect(compressor);
+  compressor.connect(context.destination);
+
+  pattern.forEach(([delay, frequency, duration]) => {
+    const noteStartsAt = startsAt + delay;
+    const oscillator = context.createOscillator();
+    const envelope = context.createGain();
+    oscillator.type = cue === "finish" ? "square" : "sine";
+    oscillator.frequency.setValueAtTime(frequency, noteStartsAt);
+    envelope.gain.setValueAtTime(0.0001, noteStartsAt);
+    envelope.gain.exponentialRampToValueAtTime(0.85, noteStartsAt + 0.018);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, noteStartsAt + duration);
+    oscillator.connect(envelope);
+    envelope.connect(master);
+    oscillator.start(noteStartsAt);
+    oscillator.stop(noteStartsAt + duration + 0.025);
+  });
+
+  const cueLength = Math.max(...pattern.map(([delay, , duration]) => delay + duration));
+  window.setTimeout(() => {
+    master.disconnect();
+    compressor.disconnect();
+  }, (cueLength + 0.25) * 1000);
+
+  if ("vibrate" in navigator) {
+    if (cue === "finish") navigator.vibrate([220, 100, 220, 100, 420]);
+    else if (cue === "warning") navigator.vibrate([100, 70, 100]);
+    else navigator.vibrate(70);
+  }
+}
 
 type PublicProfile = { id: string; name: string; avatar: string; accent: "coral" | "sage" };
 type Task = {
@@ -238,6 +286,7 @@ function countdownState(task: Task, now: number) {
   const pausePoints = task.activeSession.pausePoints + (openPauseSeconds / 60) * pauseRate;
   return {
     label: `${remainingSeconds < 0 ? "−" : ""}${clock}`,
+    remainingSeconds,
     overtime: remainingSeconds < 0,
     paused: Boolean(task.activeSession.currentPause),
     pauseCategory: task.activeSession.currentPause?.category ?? null,
@@ -424,6 +473,23 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [confirmPartnerPin, setConfirmPartnerPin] = useState("");
   const [pinBusy, setPinBusy] = useState<"self" | "partner" | "">("");
   const [pinMessage, setPinMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const playedTimerCuesRef = useRef<Set<string>>(new Set());
+
+  const prepareTimerAudio = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    const AudioContextConstructor = window.AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextConstructor) return null;
+    if (!audioContextRef.current) audioContextRef.current = new AudioContextConstructor();
+    if (audioContextRef.current.state === "suspended") void audioContextRef.current.resume();
+    return audioContextRef.current;
+  }, []);
+
+  const playTimerCue = useCallback((cue: TimerCue) => {
+    const context = prepareTimerAudio();
+    if (!context) return;
+    soundTimerCue(context, cue);
+  }, [prepareTimerAudio]);
 
   const load = useCallback(async () => {
     try {
@@ -444,6 +510,18 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     return () => { window.clearTimeout(first); window.clearInterval(timer); };
   }, []);
   useEffect(() => {
+    const unlock = () => { prepareTimerAudio(); };
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+      const context = audioContextRef.current;
+      audioContextRef.current = null;
+      if (context && context.state !== "closed") void context.close();
+    };
+  }, [prepareTimerAudio]);
+  useEffect(() => {
     if (!completeToast) return;
     const timer = window.setTimeout(() => setCompleteToast(""), 2200);
     return () => window.clearTimeout(timer);
@@ -456,11 +534,28 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
 
   const me = data?.profiles.find((profile) => profile.isCurrent);
   const partner = data?.profiles.find((profile) => !profile.isCurrent);
+  const audibleTask = me?.busy ? me.tasks.find((task) => task.id === me.busy?.taskId) ?? null : null;
+  const audibleTimer = audibleTask && data ? countdownState(audibleTask, now ?? Date.parse(data.generatedAt)) : null;
   const serverTaskIds = useMemo(() => me?.tasks.map((task) => task.id) ?? [], [me]);
   const winner = useMemo(() => {
     if (!me || !partner || me.score === partner.score) return null;
     return me.score > partner.score ? me : partner;
   }, [me, partner]);
+
+  useEffect(() => {
+    if (!audibleTask?.activeSession || !audibleTimer || audibleTimer.paused) return;
+    const sessionId = audibleTask.activeSession.id;
+    const warningKey = `${sessionId}:warning`;
+    const finishKey = `${sessionId}:finish`;
+    if (audibleTimer.remainingSeconds > 0 && audibleTimer.remainingSeconds <= 10 && !playedTimerCuesRef.current.has(warningKey)) {
+      playedTimerCuesRef.current.add(warningKey);
+      playTimerCue("warning");
+    }
+    if (audibleTimer.remainingSeconds <= 0 && !playedTimerCuesRef.current.has(finishKey)) {
+      playedTimerCuesRef.current.add(finishKey);
+      playTimerCue("finish");
+    }
+  }, [audibleTask, audibleTimer, playTimerCue]);
 
   const persistTaskOrder = useCallback(async (orderedIds: string[]) => {
     try {
@@ -505,11 +600,21 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   }, [draggingTaskId, persistTaskOrder]);
 
   async function taskAction(task: Task, action: "toggle" | "start" | "finish" | "resume") {
+    if (action === "start" || action === "resume" || action === "finish") prepareTimerAudio();
     setBusyId(task.id);
     setError("");
     try {
       await api(`/api/tasks/${task.id}/${action === "toggle" ? "complete" : action}`, { method: "POST", body: JSON.stringify({ date: todayKey() }) });
       if (action === "start" || action === "resume") setActiveTab("home");
+      if (action === "start") playTimerCue("start");
+      if (action === "resume") playTimerCue("resume");
+      if (action === "finish") {
+        const finishKey = task.activeSession ? `${task.activeSession.id}:finish` : "";
+        if (!finishKey || !playedTimerCuesRef.current.has(finishKey)) {
+          if (finishKey) playedTimerCuesRef.current.add(finishKey);
+          playTimerCue("finish");
+        }
+      }
       if (action === "finish" || (action === "toggle" && !task.completedAt)) setCompleteToast(task.title);
       await load();
     } catch (err) {
