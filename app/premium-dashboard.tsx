@@ -404,8 +404,9 @@ function LottieMotion({ src, paused = false, cover = false, loop = true, classNa
         if (!response.ok) throw new Error(`Animation request failed with ${response.status}`);
         return response.json();
       })
-      .then((animationData: object) => {
+      .then((animationData: unknown) => {
         if (controller.signal.aborted) return;
+        if (!animationData || typeof animationData !== "object") throw new Error("Animation data is invalid");
         const animation = lottie.loadAnimation({
           container,
           renderer: "svg",
