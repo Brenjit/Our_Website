@@ -222,6 +222,7 @@
 .premium-field input:focus, .premium-field select:focus { border-color: var(--p-green); box-shadow: 0 0 0 3px rgba(23,138,101,.1); }
 .premium-field > span { position: absolute; right: 12px; bottom: 15px; color: #9aa7a2; font-size: 8px; pointer-events: none; }
 .premium-form-grid { display: grid; grid-template-columns: 1.1fr .85fr .85fr; gap: 11px; }
+.premium-form-grid-two { grid-template-columns: 1fr 1fr; }
 .premium-time-note { min-height: 52px; margin-top: 12px; padding: 10px 12px; border: 1px solid #dce8e2; border-radius: 14px; color: var(--p-green); background: var(--p-green-soft); display: flex; align-items: center; gap: 9px; }
 .premium-time-note > span { display: grid; gap: 3px; }
 .premium-time-note strong { color: var(--p-ink); font-size: 8px; }
@@ -749,6 +750,49 @@
 .premium-time-picker > footer > button { height: 35px; border: 1px solid rgba(85,237,139,.34); border-radius: 11px; padding: 0 13px; color: #eafff1; background: rgba(85,237,139,.13); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 8px; font-weight: 780; }
 .premium-time-picker > footer > button:hover { border-color: rgba(85,237,139,.58); background: rgba(85,237,139,.2); transform: translateY(-1px); }
 
+.premium-duration-picker {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.9);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 92% 0,rgba(139,116,255,.14),transparent 34%),
+    linear-gradient(145deg,rgba(255,255,255,.7),rgba(238,246,244,.5));
+  box-shadow: 0 14px 38px rgba(67,82,102,.11),inset 0 1px 0 #fff;
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+}
+.premium-duration-picker > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.premium-duration-picker > header b { color: #536a62; font-size: 9px; }
+.premium-duration-picker > header strong { color: #16815a; font-size: 15px; font-variant-numeric: tabular-nums; }
+.premium-duration-picker > header strong span { color: #75837c; font-size: 7px; font-weight: 760; }
+.premium-duration-presets { margin-top: 11px; display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 6px; }
+.premium-duration-presets button {
+  min-width: 0;
+  height: 41px;
+  border: 1px solid rgba(255,255,255,.9);
+  border-radius: 12px;
+  color: #51625a;
+  background: rgba(255,255,255,.48);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+  transition: border-color .2s ease,background .2s ease,box-shadow .2s ease,transform .2s ease;
+}
+.premium-duration-presets button span { margin-left: 2px; color: #85918b; font-size: 6px; }
+.premium-duration-presets button:hover { transform: translateY(-1px); border-color: rgba(35,184,120,.25); }
+.premium-duration-presets button.selected {
+  border-color: rgba(35,184,120,.3);
+  color: #073b28;
+  background: linear-gradient(135deg,rgba(97,223,164,.92),rgba(116,215,208,.84));
+  box-shadow: 0 8px 20px rgba(44,152,108,.17),inset 0 1px 0 rgba(255,255,255,.76);
+}
+.premium-duration-presets button.selected span { color: rgba(7,59,40,.68); }
+.premium-duration-custom { margin-top: 10px; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 10px; color: #65746d; font-size: 8px; font-weight: 760; }
+.premium-duration-custom input { width: 100%; height: 39px; border: 1px solid rgba(255,255,255,.92); border-radius: 11px; padding: 0 11px; color: #1b2922; background: rgba(255,255,255,.64); box-shadow: inset 0 1px 0 #fff; outline: none; font-size: 10px; font-weight: 760; }
+.premium-duration-custom input:focus { border-color: rgba(35,184,120,.48); box-shadow: 0 0 0 3px rgba(35,184,120,.09),inset 0 1px 0 #fff; }
+
 @keyframes premium-time-picker-in { from { opacity: 0; transform: translateY(-8px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes premium-picker-mode-in { from { opacity: 0; transform: translateX(7px); } to { opacity: 1; transform: translateX(0); } }
 
@@ -762,6 +806,8 @@
   .premium-clock-dial { width: min(226px,72vw); height: min(226px,72vw); }
   .premium-time-wheels { height: 238px; }
   .premium-time-period button { width: 40px; }
+  .premium-form-grid-two { grid-template-columns: 1fr; }
+  .premium-duration-presets { grid-template-columns: repeat(4,minmax(0,1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

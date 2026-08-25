@@ -42,6 +42,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type CSSP
 type TaskCategory = "Study" | "Productive" | "Entertainment" | "Daily essentials";
 type TaskSchedule = "once" | "daily" | "weekdays" | "weekly";
 const TASK_CATEGORIES: TaskCategory[] = ["Study", "Productive", "Entertainment", "Daily essentials"];
+const DURATION_PRESETS = [5, 10, 15, 30, 45, 60] as const;
 
 type PublicProfile = { id: string; name: string; avatar: string; accent: "coral" | "sage" };
 type Task = {
@@ -215,9 +216,11 @@ function TimeWheel({ label, values, selected, onSelect }: {
   onSelect: (value: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
-  const scrollTimerRef = useRef<number | null>(null);
+  const frameRef = useRef<number | null>(null);
   const unlockTimerRef = useRef<number | null>(null);
   const programmaticScrollRef = useRef(false);
+  const selectedRef = useRef(selected);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
 
   const centerButton = useCallback((button: HTMLButtonElement, behavior: ScrollBehavior) => {
     const list = listRef.current;
@@ -238,7 +241,7 @@ function TimeWheel({ label, values, selected, onSelect }: {
   }, [centerButton]);
 
   useEffect(() => () => {
-    if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current);
+    if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
     if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
   }, []);
 
@@ -248,23 +251,28 @@ function TimeWheel({ label, values, selected, onSelect }: {
       unlockTimerRef.current = window.setTimeout(() => { programmaticScrollRef.current = false; }, 90);
       return;
     }
-    if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current);
-    scrollTimerRef.current = window.setTimeout(() => {
+    if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
+    frameRef.current = window.requestAnimationFrame(() => {
       const list = listRef.current;
       if (!list) return;
-      const center = list.scrollTop + list.clientHeight / 2;
+      const listRect = list.getBoundingClientRect();
+      const center = listRect.top + listRect.height / 2;
       const buttons = Array.from(list.querySelectorAll<HTMLButtonElement>("[data-time-value]"));
       const nearest = buttons.reduce<HTMLButtonElement | null>((closest, button) => {
         if (!closest) return button;
-        const buttonCenter = button.offsetTop + button.clientHeight / 2;
-        const closestCenter = closest.offsetTop + closest.clientHeight / 2;
+        const buttonRect = button.getBoundingClientRect();
+        const closestRect = closest.getBoundingClientRect();
+        const buttonCenter = buttonRect.top + buttonRect.height / 2;
+        const closestCenter = closestRect.top + closestRect.height / 2;
         return Math.abs(buttonCenter - center) < Math.abs(closestCenter - center) ? button : closest;
       }, null);
       const nextValue = nearest?.dataset.timeValue;
       if (!nearest || !nextValue) return;
-      if (nextValue !== selected) onSelect(nextValue);
-      centerButton(nearest, "smooth");
-    }, 80);
+      if (nextValue !== selectedRef.current) {
+        selectedRef.current = nextValue;
+        onSelect(nextValue);
+      }
+    });
   }
   return <div className="premium-time-wheel"><span>{label}</span><div ref={listRef} role="listbox" aria-label={label} onScroll={handleScroll}>
     {values.map((value) => <button type="button" role="option" data-time-value={value} aria-selected={selected === value} key={value} onClick={(event) => { onSelect(value); centerButton(event.currentTarget, "smooth"); }}>{value}</button>)}
@@ -272,17 +280,40 @@ function TimeWheel({ label, values, selected, onSelect }: {
 }
 
 function TimePicker({ value, onChange, onClose }: { value: string; onChange: (value: string) => void; onClose: () => void }) {
-  const { hour12, minute, period } = timeParts(value);
-  const update = (next: Partial<{ hour12: number; minute: number; period: "AM" | "PM" }>) => onChange(timeValue(next.hour12 ?? hour12, next.minute ?? minute, next.period ?? period));
+  const [parts, setParts] = useState(() => timeParts(value));
+  const partsRef = useRef(parts);
+  const update = useCallback((next: Partial<{ hour12: number; minute: number; period: "AM" | "PM" }>) => {
+    const updated = { ...partsRef.current, ...next };
+    partsRef.current = updated;
+    setParts(updated);
+    onChange(timeValue(updated.hour12, updated.minute, updated.period));
+  }, [onChange]);
+  const selectedTime = timeValue(parts.hour12, parts.minute, parts.period);
 
   return <section className="premium-time-picker" role="dialog" aria-label="Choose task start time">
-    <header><strong>{formatClockTime(value)}</strong></header>
+    <header><strong>{formatClockTime(selectedTime)}</strong></header>
     <div className="premium-time-wheels">
-      <TimeWheel label="Hour" values={Array.from({ length: 12 }, (_, index) => String(index + 1))} selected={String(hour12)} onSelect={(next) => update({ hour12: Number(next) })} />
-      <TimeWheel label="Minute" values={Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0"))} selected={String(minute).padStart(2, "0")} onSelect={(next) => update({ minute: Number(next) })} />
-      <TimeWheel label="AM / PM" values={["AM", "PM"]} selected={period} onSelect={(next) => update({ period: next as "AM" | "PM" })} />
+      <TimeWheel label="Hour" values={Array.from({ length: 12 }, (_, index) => String(index + 1))} selected={String(parts.hour12)} onSelect={(next) => update({ hour12: Number(next) })} />
+      <TimeWheel label="Minute" values={Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0"))} selected={String(parts.minute).padStart(2, "0")} onSelect={(next) => update({ minute: Number(next) })} />
+      <TimeWheel label="AM / PM" values={["AM", "PM"]} selected={parts.period} onSelect={(next) => update({ period: next as "AM" | "PM" })} />
     </div>
     <footer><button type="button" onClick={onClose}><Check size={14} /> Done</button></footer>
+  </section>;
+}
+
+function DurationPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const numericValue = Number(value);
+  const presetSelected = DURATION_PRESETS.includes(numericValue as typeof DURATION_PRESETS[number]);
+  const [customOpen, setCustomOpen] = useState(!presetSelected);
+
+  return <section className="premium-duration-picker">
+    <input type="hidden" name="durationMinutes" value={value} />
+    <header><b>Focus duration</b><strong>{numericValue || 0}<span> min</span></strong></header>
+    <div className="premium-duration-presets" role="group" aria-label="Focus duration">
+      {DURATION_PRESETS.map((minutes) => <button type="button" key={minutes} className={!customOpen && numericValue === minutes ? "selected" : ""} onClick={() => { setCustomOpen(false); onChange(String(minutes)); }}>{minutes}<span>min</span></button>)}
+      <button type="button" className={customOpen ? "selected" : ""} onClick={() => setCustomOpen(true)}>Custom</button>
+    </div>
+    {customOpen && <label className="premium-duration-custom"><span>Minutes</span><input type="number" inputMode="numeric" min="0" max="240" value={value} onChange={(event) => onChange(event.target.value)} /></label>}
   </section>;
 }
 
@@ -478,6 +509,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [draftCategory, setDraftCategory] = useState<TaskCategory>("Study");
   const [draftSchedule, setDraftSchedule] = useState<TaskSchedule>("once");
   const [draftTime, setDraftTime] = useState(defaultScheduledTime);
+  const [draftDuration, setDraftDuration] = useState("30");
   const [timePickerOpen, setTimePickerOpen] = useState(false);
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -620,6 +652,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
       setDraftCategory("Study");
       setDraftSchedule("once");
       setDraftTime(defaultScheduledTime());
+      setDraftDuration("30");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t add that routine");
@@ -959,13 +992,14 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         </div>
         <div className="premium-modal-title"><span><Plus size={17} /></span><div><p>CREATE A TASK</p><h2>What will move your day forward?</h2></div></div>
         <label className="premium-field">Task name<input name="title" value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} placeholder="Study calculus, cook dinner…" maxLength={80} required /></label>
-        <div className="premium-form-grid">
+        <div className="premium-form-grid premium-form-grid-two">
           <label className="premium-field">Category<select name="category" value={draftCategory} onChange={(event) => setDraftCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
           <div className="premium-field"><b className="premium-field-name">Start time</b><input name="scheduledTime" type="hidden" value={draftTime} /><button className="premium-time-trigger" type="button" onClick={() => setTimePickerOpen((open) => !open)} aria-expanded={timePickerOpen}><Clock3 size={15} /><span>{formatClockTime(draftTime)}</span><ChevronDown size={14} /></button></div>
-          <label className="premium-field">Focus duration<input name="durationMinutes" type="number" min="0" max="240" defaultValue="25" /><span>minutes</span></label>
         </div>
 
         {timePickerOpen && <TimePicker value={draftTime} onChange={setDraftTime} onClose={() => setTimePickerOpen(false)} />}
+
+        <DurationPicker value={draftDuration} onChange={setDraftDuration} />
 
         <div className="premium-time-note"><Clock3 size={15} /><span><strong>Scheduled for {formatClockTime(draftTime)}</strong></span></div>
 
@@ -994,13 +1028,14 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         </div>
         <div className="premium-modal-title"><span><CalendarClock size={17} /></span><div><p>FLEXIBLE PLANNING</p><h2>Make this task fit your day.</h2></div></div>
         <label className="premium-field">Task name<input name="title" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={80} required /></label>
-        <div className="premium-form-grid">
+        <div className="premium-form-grid premium-form-grid-two">
           <label className="premium-field">Category<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
           <div className="premium-field"><b className="premium-field-name">Start time</b><input name="scheduledTime" type="hidden" value={editTime} /><button className="premium-time-trigger" type="button" onClick={() => setEditTimePickerOpen((open) => !open)} aria-expanded={editTimePickerOpen}><Clock3 size={15} /><span>{formatClockTime(editTime)}</span><ChevronDown size={14} /></button></div>
-          <label className="premium-field">Focus duration<input name="durationMinutes" type="number" min="0" max="240" value={editDuration} onChange={(event) => setEditDuration(event.target.value)} /><span>minutes</span></label>
         </div>
 
         {editTimePickerOpen && <TimePicker value={editTime} onChange={setEditTime} onClose={() => setEditTimePickerOpen(false)} />}
+
+        <DurationPicker value={editDuration} onChange={setEditDuration} />
 
         <div className="premium-time-note premium-reschedule-note"><CalendarClock size={15} /><span><strong>Moves to {formatClockTime(editTime)}</strong></span></div>
 
