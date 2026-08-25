@@ -355,11 +355,15 @@ function suggestedKind(title: string, category: TaskCategory) {
   return visualKind({ title, category, animationKey: "auto" });
 }
 
+function isKaveri(profile: PublicProfile) {
+  return /^kaveri(?:\s|$)/i.test(profile.name.trim());
+}
+
 function lottieFor(task: Task | null | undefined, profile: PublicProfile, together: boolean) {
   const kind = visualKind(task);
   if (kind === "cooking") return together ? LOTTIES.cookingTogether : LOTTIES.cooking;
-  if (kind === "study") return together ? LOTTIES.studyTogether : profile.accent === "coral" ? LOTTIES.studyFemale : LOTTIES.studyMale;
-  if (kind === "planning") return profile.accent === "coral" ? LOTTIES.studyFemale : LOTTIES.studyMale;
+  if (kind === "study") return together ? LOTTIES.studyTogether : isKaveri(profile) ? LOTTIES.studyFemale : LOTTIES.studyMale;
+  if (kind === "planning") return isKaveri(profile) ? LOTTIES.studyFemale : LOTTIES.studyMale;
   return null;
 }
 
@@ -782,15 +786,15 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const displayedTask = myTask ?? plannedTask;
   const focusAnimation = displayedTask
     ? lottieFor(displayedTask, me, together)
-    : /kaveri/i.test(me.name) ? LOTTIES.natureFemale : LOTTIES.studyMale;
+    : isKaveri(me) ? LOTTIES.natureFemale : LOTTIES.studyMale;
   const partnerAnimation = partnerTask ? lottieFor(partnerTask, partner, false) : null;
   const progress = myTask && timer && myTask.durationMinutes ? Math.min(100, Math.max(0, (timer.elapsedMinutes / myTask.durationMinutes) * 100)) : 0;
   const maxScore = Math.max(1, Math.abs(me.score), Math.abs(partner.score));
   const suggestion = suggestedKind(draftTitle, draftCategory);
   const suggestedAnimation = suggestion === "cooking"
     ? LOTTIES.cooking
-    : suggestion === "study" ? me.accent === "coral" ? LOTTIES.studyFemale : LOTTIES.studyMale
-      : suggestion === "planning" ? me.accent === "coral" ? LOTTIES.studyFemale : LOTTIES.studyMale : null;
+    : suggestion === "study" ? isKaveri(me) ? LOTTIES.studyFemale : LOTTIES.studyMale
+      : suggestion === "planning" ? isKaveri(me) ? LOTTIES.studyFemale : LOTTIES.studyMale : null;
   const focusStudy = me.focusMinutes.study + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Study" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
   const focusProductive = me.focusMinutes.productive + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Productive" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
   const weekdayName = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date());
@@ -852,7 +856,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             <div className="premium-focus-center">
               <div className="premium-focus-orb" style={{ "--focus-progress": `${progress * 3.6}deg` } as CSSProperties}>
                 <div className="premium-focus-orb-inner">
-                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} cover={!displayedTask && /kaveri/i.test(me.name)} className={!displayedTask && /kaveri/i.test(me.name) ? "is-idle-nature" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
+                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} cover={!displayedTask && isKaveri(me)} className={!displayedTask && isKaveri(me) ? "is-idle-nature" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
                 </div>
                 <div className="premium-time-float">
                   <strong>{timer?.label ?? formatCurrentClock(currentNow)}</strong>
