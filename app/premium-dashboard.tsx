@@ -10,7 +10,6 @@ import {
   CalendarClock,
   CalendarDays,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleCheck,
   Clapperboard,
@@ -192,113 +191,6 @@ function scheduleState(task: Task, now: number) {
     detail: `${compactRelativeTime(now - startTime)} past ${formatClockTime(task.scheduledTime)}`,
     timestamp: startTime,
   };
-}
-
-function timeParts(value: string) {
-  const safeValue = /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : "09:00";
-  const [hour24, minute] = safeValue.split(":").map(Number);
-  return {
-    hour12: hour24 % 12 || 12,
-    minute,
-    period: hour24 >= 12 ? "PM" as const : "AM" as const,
-  };
-}
-
-function timeValue(hour12: number, minute: number, period: "AM" | "PM") {
-  const hour24 = (hour12 % 12) + (period === "PM" ? 12 : 0);
-  return `${String(hour24).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-}
-
-function TimeWheel({ label, values, selected, onSelect }: {
-  label: string;
-  values: string[];
-  selected: string;
-  onSelect: (value: string) => void;
-}) {
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const frameRef = useRef<number | null>(null);
-  const unlockTimerRef = useRef<number | null>(null);
-  const programmaticScrollRef = useRef(false);
-  const selectedRef = useRef(selected);
-  useEffect(() => { selectedRef.current = selected; }, [selected]);
-
-  const centerButton = useCallback((button: HTMLButtonElement, behavior: ScrollBehavior) => {
-    const list = listRef.current;
-    if (!list) return;
-    programmaticScrollRef.current = true;
-    list.scrollTo({
-      top: button.offsetTop - (list.clientHeight - button.clientHeight) / 2,
-      behavior,
-    });
-    if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
-    unlockTimerRef.current = window.setTimeout(() => { programmaticScrollRef.current = false; }, behavior === "smooth" ? 220 : 0);
-  }, []);
-
-  useEffect(() => {
-    const list = listRef.current;
-    const selectedButton = list?.querySelector<HTMLButtonElement>("[aria-selected='true']");
-    if (selectedButton) centerButton(selectedButton, "auto");
-  }, [centerButton]);
-
-  useEffect(() => () => {
-    if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
-    if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
-  }, []);
-
-  function handleScroll() {
-    if (programmaticScrollRef.current) {
-      if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
-      unlockTimerRef.current = window.setTimeout(() => { programmaticScrollRef.current = false; }, 90);
-      return;
-    }
-    if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
-    frameRef.current = window.requestAnimationFrame(() => {
-      const list = listRef.current;
-      if (!list) return;
-      const listRect = list.getBoundingClientRect();
-      const center = listRect.top + listRect.height / 2;
-      const buttons = Array.from(list.querySelectorAll<HTMLButtonElement>("[data-time-value]"));
-      const nearest = buttons.reduce<HTMLButtonElement | null>((closest, button) => {
-        if (!closest) return button;
-        const buttonRect = button.getBoundingClientRect();
-        const closestRect = closest.getBoundingClientRect();
-        const buttonCenter = buttonRect.top + buttonRect.height / 2;
-        const closestCenter = closestRect.top + closestRect.height / 2;
-        return Math.abs(buttonCenter - center) < Math.abs(closestCenter - center) ? button : closest;
-      }, null);
-      const nextValue = nearest?.dataset.timeValue;
-      if (!nearest || !nextValue) return;
-      if (nextValue !== selectedRef.current) {
-        selectedRef.current = nextValue;
-        onSelect(nextValue);
-      }
-    });
-  }
-  return <div className="premium-time-wheel"><span>{label}</span><div ref={listRef} role="listbox" aria-label={label} onScroll={handleScroll}>
-    {values.map((value) => <button type="button" role="option" data-time-value={value} aria-selected={selected === value} key={value} onClick={(event) => { onSelect(value); centerButton(event.currentTarget, "smooth"); }}>{value}</button>)}
-  </div></div>;
-}
-
-function TimePicker({ value, onChange, onClose }: { value: string; onChange: (value: string) => void; onClose: () => void }) {
-  const [parts, setParts] = useState(() => timeParts(value));
-  const partsRef = useRef(parts);
-  const update = useCallback((next: Partial<{ hour12: number; minute: number; period: "AM" | "PM" }>) => {
-    const updated = { ...partsRef.current, ...next };
-    partsRef.current = updated;
-    setParts(updated);
-    onChange(timeValue(updated.hour12, updated.minute, updated.period));
-  }, [onChange]);
-  const selectedTime = timeValue(parts.hour12, parts.minute, parts.period);
-
-  return <section className="premium-time-picker" role="dialog" aria-label="Choose task start time">
-    <header><strong>{formatClockTime(selectedTime)}</strong></header>
-    <div className="premium-time-wheels">
-      <TimeWheel label="Hour" values={Array.from({ length: 12 }, (_, index) => String(index + 1))} selected={String(parts.hour12)} onSelect={(next) => update({ hour12: Number(next) })} />
-      <TimeWheel label="Minute" values={Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0"))} selected={String(parts.minute).padStart(2, "0")} onSelect={(next) => update({ minute: Number(next) })} />
-      <TimeWheel label="AM / PM" values={["AM", "PM"]} selected={parts.period} onSelect={(next) => update({ period: next as "AM" | "PM" })} />
-    </div>
-    <footer><button type="button" onClick={onClose}><Check size={14} /> Done</button></footer>
-  </section>;
 }
 
 function DurationPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
@@ -509,17 +401,17 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [draftTitle, setDraftTitle] = useState("");
   const [draftCategory, setDraftCategory] = useState<TaskCategory>("Study");
   const [draftSchedule, setDraftSchedule] = useState<TaskSchedule>("once");
+  const [draftScheduled, setDraftScheduled] = useState(false);
   const [draftTime, setDraftTime] = useState(defaultScheduledTime);
   const [draftDuration, setDraftDuration] = useState("30");
-  const [timePickerOpen, setTimePickerOpen] = useState(false);
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editCategory, setEditCategory] = useState<TaskCategory>("Study");
   const [editDuration, setEditDuration] = useState("25");
   const [editSchedule, setEditSchedule] = useState<TaskSchedule>("once");
   const [editDate, setEditDate] = useState(todayKey);
+  const [editScheduled, setEditScheduled] = useState(false);
   const [editTime, setEditTime] = useState(defaultScheduledTime);
-  const [editTimePickerOpen, setEditTimePickerOpen] = useState(false);
   const [taskOrder, setTaskOrder] = useState<string[] | null>(null);
   const taskOrderRef = useRef<string[]>([]);
   const [draggingTaskId, setDraggingTaskId] = useState("");
@@ -648,10 +540,10 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     try {
       await api("/api/tasks", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
       setAddOpen(false);
-      setTimePickerOpen(false);
       setDraftTitle("");
       setDraftCategory("Study");
       setDraftSchedule("once");
+      setDraftScheduled(false);
       setDraftTime(defaultScheduledTime());
       setDraftDuration("30");
       await load();
@@ -663,7 +555,6 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   }
 
   function closeAddTask() {
-    setTimePickerOpen(false);
     setAddOpen(false);
   }
 
@@ -678,12 +569,11 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     setEditDuration(String(task.durationMinutes));
     setEditSchedule(task.scheduleType);
     setEditDate(task.scheduledDate ?? todayKey());
+    setEditScheduled(Boolean(task.scheduledTime));
     setEditTime(task.scheduledTime ?? defaultScheduledTime());
-    setEditTimePickerOpen(false);
   }
 
   function closeEditTask() {
-    setEditTimePickerOpen(false);
     setEditTask(null);
   }
 
@@ -903,7 +793,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
                 {timer.paused ? <button className="premium-resume" onClick={() => taskAction(myTask, "resume")}><Play size={16} fill="currentColor" /> Resume</button> : <button className="premium-pause" onClick={() => setPauseTask(myTask)}><Pause size={16} fill="currentColor" /> Pause</button>}
                 <button className="premium-finish" onClick={() => taskAction(myTask, "finish")}><Check size={17} strokeWidth={3} /> Finish session</button>
               </div>
-            </div> : <div className="premium-idle-footer">{plannedTask ? <><p><Clock3 size={14} /> {plannedSchedule?.detail}. Your planned start was {plannedTask.scheduledTime ? formatClockTime(plannedTask.scheduledTime) : "set for anytime"}.</p><button onClick={() => taskAction(plannedTask, plannedTask.durationMinutes > 0 ? "start" : "toggle")} disabled={Boolean(busyId)}><Play size={16} fill="currentColor" /> {plannedTask.durationMinutes > 0 ? "Start now" : "Complete task"}</button></> : <><p>Your day is clear. Add a task with a start time and it will appear here when it is due.</p><button onClick={() => setAddOpen(true)}><Plus size={16} /> Plan a focus session</button></>}</div>}
+            </div> : <div className="premium-idle-footer">{plannedTask ? <><p><Clock3 size={14} /> {plannedTask.scheduledTime ? `${plannedSchedule?.detail}. Planned for ${formatClockTime(plannedTask.scheduledTime)}.` : "Ready whenever you are. Start it when you want."}</p><button onClick={() => taskAction(plannedTask, plannedTask.durationMinutes > 0 ? "start" : "toggle")} disabled={Boolean(busyId)}><Play size={16} fill="currentColor" /> {plannedTask.durationMinutes > 0 ? "Start now" : "Complete task"}</button></> : <><p>Your day is clear. Add a task and start whenever you&apos;re ready.</p><button onClick={() => setAddOpen(true)}><Plus size={16} /> Plan a focus session</button></>}</div>}
           </section>
 
           <div className="premium-tab-heading premium-progress-heading"><span className="premium-kicker">YOUR MOMENTUM</span><h1>Progress that feels alive.</h1><p>A clean view of your time, consistency, and shared score this week.</p></div>
@@ -923,7 +813,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             {partnerTask && <b>{partnerTimer?.label}</b>}
           </div>
 
-          <div className="premium-planner-hint"><span><GripVertical size={12} /> Drag to reorder</span><span><CalendarClock size={12} /> Tap time to reschedule</span></div>
+          <div className="premium-planner-hint"><span><GripVertical size={12} /> Drag to reorder</span><span><CalendarClock size={12} /> Tap timing to schedule</span></div>
 
           <div className="premium-task-list">
             {plannerTasks.length ? plannerTasks.map((task, index) => <QueueTask key={task.id} task={task} busy={Boolean(me.busy || busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === plannerTasks.length - 1} onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-empty"><Sparkles size={22} /><strong>Your day is open</strong><p>Add a task and make the first move.</p></div>}
@@ -993,16 +883,18 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         </div>
         <div className="premium-modal-title"><span><Plus size={17} /></span><div><p>CREATE A TASK</p><h2>What will move your day forward?</h2></div></div>
         <label className="premium-field">Task name<input name="title" value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} placeholder="Study calculus, cook dinner…" maxLength={80} required /></label>
-        <div className="premium-form-grid premium-form-grid-two">
-          <label className="premium-field">Category<select name="category" value={draftCategory} onChange={(event) => setDraftCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
-          <div className="premium-field"><b className="premium-field-name">Start time</b><input name="scheduledTime" type="hidden" value={draftTime} /><button className="premium-time-trigger" type="button" onClick={() => setTimePickerOpen((open) => !open)} aria-expanded={timePickerOpen}><Clock3 size={15} /><span>{formatClockTime(draftTime)}</span><ChevronDown size={14} /></button></div>
-        </div>
+        <label className="premium-field">Category<select name="category" value={draftCategory} onChange={(event) => setDraftCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
 
-        {timePickerOpen && <TimePicker value={draftTime} onChange={setDraftTime} onClose={() => setTimePickerOpen(false)} />}
+        <fieldset className="premium-start-mode"><legend>Start</legend><input name="scheduledTime" type="hidden" value={draftScheduled ? draftTime : ""} />
+          <button type="button" className={!draftScheduled ? "selected" : ""} onClick={() => setDraftScheduled(false)} aria-pressed={!draftScheduled}><Play size={16} /><span><strong>Start anytime</strong><small>Begins when you tap Start</small></span>{!draftScheduled && <Check size={14} />}</button>
+          <button type="button" className={draftScheduled ? "selected" : ""} onClick={() => setDraftScheduled(true)} aria-pressed={draftScheduled}><CalendarClock size={16} /><span><strong>Scheduled</strong><small>Set a planned start time</small></span>{draftScheduled && <Check size={14} />}</button>
+        </fieldset>
+
+        {draftScheduled && <label className="premium-field premium-native-time-field">Start time<input type="time" value={draftTime} onChange={(event) => setDraftTime(event.target.value)} required /></label>}
 
         <DurationPicker value={draftDuration} onChange={setDraftDuration} />
 
-        <div className="premium-time-note"><Clock3 size={15} /><span><strong>Scheduled for {formatClockTime(draftTime)}</strong></span></div>
+        <div className="premium-time-note"><Clock3 size={15} /><span><strong>{draftScheduled ? `Scheduled for ${formatClockTime(draftTime)}` : "Starts when you tap Start"}</strong><small>{draftScheduled ? "It will be highlighted when the planned time arrives." : "No clock time is required."}</small></span></div>
 
         <fieldset className="premium-schedule"><legend>Repeat</legend><input type="hidden" name="scheduleType" value={draftSchedule} /><input type="hidden" name="dateKey" value={todayKey()} />
           {([
@@ -1024,21 +916,23 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
       <form className="premium-modal premium-task-modal premium-edit-modal" onSubmit={updateTask}>
         <div className="premium-task-modal-bar">
           <button type="button" className="premium-modal-close" onClick={closeEditTask} aria-label="Close"><X size={17} /></button>
-          <div><small>EDIT TASK</small><strong>Reschedule your plan</strong></div>
+          <div><small>EDIT TASK</small><strong>Update your plan</strong></div>
           <button className="premium-create-button premium-create-button-top" disabled={busyId === `edit-${editTask.id}`}>{busyId === `edit-${editTask.id}` ? "Saving…" : "Save changes"}<Check size={16} /></button>
         </div>
         <div className="premium-modal-title"><span><CalendarClock size={17} /></span><div><p>FLEXIBLE PLANNING</p><h2>Make this task fit your day.</h2></div></div>
         <label className="premium-field">Task name<input name="title" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={80} required /></label>
-        <div className="premium-form-grid premium-form-grid-two">
-          <label className="premium-field">Category<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
-          <div className="premium-field"><b className="premium-field-name">Start time</b><input name="scheduledTime" type="hidden" value={editTime} /><button className="premium-time-trigger" type="button" onClick={() => setEditTimePickerOpen((open) => !open)} aria-expanded={editTimePickerOpen}><Clock3 size={15} /><span>{formatClockTime(editTime)}</span><ChevronDown size={14} /></button></div>
-        </div>
+        <label className="premium-field">Category<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
 
-        {editTimePickerOpen && <TimePicker value={editTime} onChange={setEditTime} onClose={() => setEditTimePickerOpen(false)} />}
+        <fieldset className="premium-start-mode"><legend>Start</legend><input name="scheduledTime" type="hidden" value={editScheduled ? editTime : ""} />
+          <button type="button" className={!editScheduled ? "selected" : ""} onClick={() => setEditScheduled(false)} aria-pressed={!editScheduled}><Play size={16} /><span><strong>Start anytime</strong><small>Begins when you tap Start</small></span>{!editScheduled && <Check size={14} />}</button>
+          <button type="button" className={editScheduled ? "selected" : ""} onClick={() => setEditScheduled(true)} aria-pressed={editScheduled}><CalendarClock size={16} /><span><strong>Scheduled</strong><small>Set a planned start time</small></span>{editScheduled && <Check size={14} />}</button>
+        </fieldset>
+
+        {editScheduled && <label className="premium-field premium-native-time-field">Start time<input type="time" value={editTime} onChange={(event) => setEditTime(event.target.value)} required /></label>}
 
         <DurationPicker value={editDuration} onChange={setEditDuration} />
 
-        <div className="premium-time-note premium-reschedule-note"><CalendarClock size={15} /><span><strong>Moves to {formatClockTime(editTime)}</strong></span></div>
+        <div className="premium-time-note premium-reschedule-note"><CalendarClock size={15} /><span><strong>{editScheduled ? `Scheduled for ${formatClockTime(editTime)}` : "Starts when you tap Start"}</strong><small>{editScheduled ? "The task will be highlighted around this time." : "This task has no fixed start time."}</small></span></div>
 
         <fieldset className="premium-schedule"><legend>Repeat</legend><input type="hidden" name="scheduleType" value={editSchedule} />
           {([

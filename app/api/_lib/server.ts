@@ -206,6 +206,7 @@ export function validDateKey(value: unknown) {
 }
 
 export function validScheduledTime(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
     throw new Error("Choose a valid start time");
   }
