@@ -31,7 +31,7 @@
   "rules": [
     {
       "type": "ESModule",
-      "globs": ["dist/server/**/*.js", "dist/server/**/*.mjs"]
+      "globs": ["**/*.js", "**/*.mjs"]
     }
   ]
 }
