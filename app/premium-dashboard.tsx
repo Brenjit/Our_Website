@@ -102,7 +102,7 @@ type DashboardData = {
 
 const LOTTIES = {
   studyMale: "/Lotties/Study.json",
-  studyFemale: "/Lotties/study%20girl.json",
+  studyFemale: "/Lotties/Reading%20girl.json",
   studyTogether: "/Lotties/Study%20discussion%20both.json",
   cooking: "/Lotties/Cooking.json",
   cookingTogether: "/Lotties/cooking%20together.json",
