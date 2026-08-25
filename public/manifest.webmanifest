@@ -1,0 +1,24 @@
+{
+  "name": "Twogether — A shared rhythm for two",
+  "short_name": "Twogether",
+  "description": "Private routines, live focus, shared progress, and friendly competition for two.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3faf7",
+  "theme_color": "#43d79b",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

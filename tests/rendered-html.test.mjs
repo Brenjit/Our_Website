@@ -17,6 +17,9 @@ test("server-renders the finished Twogether shell", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /<title>Twogether/);
+  assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
+  assert.match(html, /rel="apple-touch-icon"[^>]+\/icons\/apple-touch-icon\.png/);
+  assert.match(html, /\/icons\/icon-192\.png/);
   assert.match(html, /Making space for two/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
