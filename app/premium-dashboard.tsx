@@ -42,6 +42,7 @@ type TaskCategory = "Study" | "Productive" | "Entertainment" | "Daily essentials
 type TaskSchedule = "once" | "daily" | "weekdays" | "weekly";
 const TASK_CATEGORIES: TaskCategory[] = ["Study", "Productive", "Entertainment", "Daily essentials"];
 const DURATION_PRESETS = [5, 10, 15, 30, 45, 60] as const;
+const FINISH_ALARM_SRC = "/SFX/ES_Alert%20Tone%2C%20Ringtone%2002%20-%20Epidemic%20Sound.mp3";
 type TimerCue = "start" | "resume" | "warning" | "finish";
 
 const TIMER_CUE_PATTERNS: Record<TimerCue, Array<[delay: number, frequency: number, duration: number]>> = {
@@ -474,8 +475,9 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [pinBusy, setPinBusy] = useState<"self" | "partner" | "">("");
   const [pinMessage, setPinMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const finishAlarmAudioRef = useRef<HTMLAudioElement | null>(null);
   const playedTimerCuesRef = useRef<Set<string>>(new Set());
-  const finishAlarmRef = useRef<{ sessionId: string; intervalId: number } | null>(null);
+  const finishAlarmRef = useRef<{ sessionId: string; vibrationIntervalId: number | null; fallbackIntervalId: number | null } | null>(null);
   const silencedAlarmSessionRef = useRef("");
 
   const prepareTimerAudio = useCallback(() => {
@@ -493,20 +495,75 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     soundTimerCue(context, cue);
   }, [prepareTimerAudio]);
 
+  const prepareFinishAlarmAudio = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    if (!finishAlarmAudioRef.current) {
+      const audio = new Audio(FINISH_ALARM_SRC);
+      audio.loop = true;
+      audio.preload = "auto";
+      audio.volume = 1;
+      finishAlarmAudioRef.current = audio;
+    }
+    return finishAlarmAudioRef.current;
+  }, []);
+
+  const unlockFinishAlarmAudio = useCallback(() => {
+    const audio = prepareFinishAlarmAudio();
+    if (!audio || finishAlarmRef.current || !audio.paused) return;
+    audio.muted = true;
+    const attempt = audio.play();
+    void attempt.then(() => {
+      if (finishAlarmRef.current) return;
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+    }).catch(() => {
+      audio.muted = false;
+    });
+  }, [prepareFinishAlarmAudio]);
+
   const stopFinishAlarm = useCallback(() => {
-    if (!finishAlarmRef.current) return;
-    window.clearInterval(finishAlarmRef.current.intervalId);
+    const alarm = finishAlarmRef.current;
+    if (alarm?.vibrationIntervalId !== null && alarm?.vibrationIntervalId !== undefined) window.clearInterval(alarm.vibrationIntervalId);
+    if (alarm?.fallbackIntervalId !== null && alarm?.fallbackIntervalId !== undefined) window.clearInterval(alarm.fallbackIntervalId);
     finishAlarmRef.current = null;
+    const audio = finishAlarmAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+    }
     if ("vibrate" in navigator) navigator.vibrate(0);
   }, []);
 
   const startFinishAlarm = useCallback((sessionId: string) => {
     if (finishAlarmRef.current?.sessionId === sessionId) return;
     stopFinishAlarm();
-    playTimerCue("finish");
-    const intervalId = window.setInterval(() => playTimerCue("finish"), 2100);
-    finishAlarmRef.current = { sessionId, intervalId };
-  }, [playTimerCue, stopFinishAlarm]);
+    const vibrate = () => { if ("vibrate" in navigator) navigator.vibrate([520, 140, 520]); };
+    vibrate();
+    const alarm = {
+      sessionId,
+      vibrationIntervalId: window.setInterval(vibrate, 1500),
+      fallbackIntervalId: null as number | null,
+    };
+    finishAlarmRef.current = alarm;
+
+    const audio = prepareFinishAlarmAudio();
+    if (!audio) {
+      playTimerCue("finish");
+      alarm.fallbackIntervalId = window.setInterval(() => playTimerCue("finish"), 2100);
+      return;
+    }
+    audio.loop = true;
+    audio.volume = 1;
+    audio.muted = false;
+    audio.currentTime = 0;
+    void audio.play().catch(() => {
+      if (finishAlarmRef.current?.sessionId !== sessionId) return;
+      playTimerCue("finish");
+      alarm.fallbackIntervalId = window.setInterval(() => playTimerCue("finish"), 2100);
+    });
+  }, [playTimerCue, prepareFinishAlarmAudio, stopFinishAlarm]);
 
   const load = useCallback(async () => {
     try {
@@ -527,18 +584,22 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     return () => { window.clearTimeout(first); window.clearInterval(timer); };
   }, []);
   useEffect(() => {
-    const unlock = () => { prepareTimerAudio(); };
+    const unlock = () => {
+      prepareTimerAudio();
+      unlockFinishAlarmAudio();
+    };
     window.addEventListener("pointerdown", unlock, { once: true });
     window.addEventListener("keydown", unlock, { once: true });
     return () => {
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
       stopFinishAlarm();
+      finishAlarmAudioRef.current = null;
       const context = audioContextRef.current;
       audioContextRef.current = null;
       if (context && context.state !== "closed") void context.close();
     };
-  }, [prepareTimerAudio, stopFinishAlarm]);
+  }, [prepareTimerAudio, stopFinishAlarm, unlockFinishAlarmAudio]);
   useEffect(() => {
     if (!completeToast) return;
     const timer = window.setTimeout(() => setCompleteToast(""), 2200);
@@ -622,6 +683,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
 
   async function taskAction(task: Task, action: "toggle" | "start" | "finish" | "resume") {
     if (action === "start" || action === "resume" || action === "finish") prepareTimerAudio();
+    if (action === "start" || action === "resume") unlockFinishAlarmAudio();
     const sessionId = task.activeSession?.id ?? "";
     if (action === "start") silencedAlarmSessionRef.current = "";
     if (action === "finish" && sessionId) {
