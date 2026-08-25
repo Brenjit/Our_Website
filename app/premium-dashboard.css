@@ -1579,6 +1579,15 @@
   .premium-stage-datetime > span { min-height: 29px; padding: 0 9px; font-size: 7.5px; }
 }
 
+.premium-refresh svg { transition: transform .28s ease; }
+.premium-refresh.is-refreshing svg { animation: premium-refresh-spin .72s linear infinite; }
+.premium-refresh:disabled { cursor: wait; opacity: .72; transform: none !important; }
+@keyframes premium-refresh-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .premium-refresh.is-refreshing svg { animation-duration: 1.5s; }
+}
+
 /* Lively glass loading scene */
 .premium-loading {
   position: relative;

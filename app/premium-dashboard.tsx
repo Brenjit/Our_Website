@@ -27,6 +27,7 @@ import {
   Pencil,
   Play,
   Plus,
+  RefreshCw,
   Repeat2,
   Sparkles,
   Square,
@@ -447,6 +448,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [now, setNow] = useState<number | null>(null);
   const [completeToast, setCompleteToast] = useState("");
   const [plannerToast, setPlannerToast] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Task | "all" | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftCategory, setDraftCategory] = useState<TaskCategory>("Study");
@@ -575,6 +577,16 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
       setError(err instanceof Error ? err.message : "Couldn’t load your day");
     }
   }, []);
+
+  const refreshDashboard = useCallback(async () => {
+    setRefreshing(true);
+    setNow(Date.now());
+    try {
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load]);
 
   useEffect(() => { const first = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(first); }, [load]);
   useEffect(() => {
@@ -933,6 +945,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         <div className="premium-top-identity"><span className="premium-mobile-logo"><Heart size={16} fill="currentColor" /> <b>two.</b></span></div>
         <div className="premium-top-actions">
           <span className="premium-score-pill"><Flame size={15} fill="currentColor" /> {formatPoints(me.score)} pts</span>
+          <button type="button" className={`premium-refresh ${refreshing ? "is-refreshing" : ""}`} onClick={() => void refreshDashboard()} disabled={refreshing} aria-label={refreshing ? "Refreshing dashboard" : "Refresh dashboard"} title="Refresh dashboard"><RefreshCw size={15} /><span>{refreshing ? "Refreshing" : "Refresh"}</span></button>
           <button onClick={() => setAddOpen(true)}><Plus size={16} /> New task</button>
           <button className="premium-user" onClick={() => setSettingsOpen(true)} aria-label={`Open ${me.name}'s profile settings`}><span className={me.accent}>{me.avatar}</span><b>{me.name}</b></button>
         </div>
