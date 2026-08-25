@@ -359,7 +359,7 @@ function lottieFor(task: Task | null | undefined, profile: PublicProfile, togeth
   return null;
 }
 
-function LottieMotion({ src, paused = false, cover = false, className = "" }: { src: string; paused?: boolean; cover?: boolean; className?: string }) {
+function LottieMotion({ src, paused = false, cover = false, loop = true, className = "" }: { src: string; paused?: boolean; cover?: boolean; loop?: boolean; className?: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const animationRef = useRef<AnimationItem | null>(null);
   const [loadedSrc, setLoadedSrc] = useState("");
@@ -378,7 +378,7 @@ function LottieMotion({ src, paused = false, cover = false, className = "" }: { 
         const animation = lottie.loadAnimation({
           container,
           renderer: "svg",
-          loop: true,
+          loop,
           autoplay: !paused,
           animationData,
           rendererSettings: { preserveAspectRatio: cover ? "xMidYMid slice" : "xMidYMid meet" },
@@ -395,7 +395,7 @@ function LottieMotion({ src, paused = false, cover = false, className = "" }: { 
       animationRef.current = null;
       container.replaceChildren();
     };
-  }, [src, paused, cover]);
+  }, [src, paused, cover, loop]);
   return <div className={`premium-lottie ${paused ? "is-paused" : ""} ${cover ? "is-cover" : ""} ${className}`}>
     <div ref={containerRef} className="premium-lottie-canvas" />
     {loadedSrc !== src && failedSrc !== src && <span className="premium-lottie-loader" />}
@@ -854,7 +854,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             <div className="premium-focus-center">
               <div className="premium-focus-orb" style={{ "--focus-progress": `${progress * 3.6}deg` } as CSSProperties}>
                 <div className="premium-focus-orb-inner">
-                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} cover={!displayedTask && (isMorning || isKaveri(me))} className={!displayedTask ? isMorning ? "is-idle-sunrise" : isKaveri(me) ? "is-idle-nature" : "" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
+                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} cover={!displayedTask && (isMorning || isKaveri(me))} loop={focusAnimation !== LOTTIES.sunrise} className={!displayedTask ? isMorning ? "is-idle-sunrise" : isKaveri(me) ? "is-idle-nature" : "" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
                 </div>
                 <div className="premium-time-float">
                   <strong>{timer?.label ?? formatCurrentClock(currentNow)}</strong>
