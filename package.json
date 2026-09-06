@@ -14,10 +14,14 @@
     "db:migrate:remote": "wrangler d1 migrations apply twogether-db --remote --config wrangler.jsonc",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "android:sync": "cap sync android",
+    "android:build": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "android:open": "cap open android"
   },
   "dependencies": {
     "@block65/webcrypto-web-push": "^2.0.0",
+    "@capacitor/core": "^8.5.1",
     "drizzle-orm": "0.45.2",
     "lottie-web": "^5.13.0",
     "lucide-react": "^1.34.0",
@@ -25,6 +29,8 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/cli": "^8.5.1",
     "@cloudflare/vite-plugin": "^1.54.4",
     "@eslint/js": "9.39.4",
     "@next/eslint-plugin-next": "16.2.6",

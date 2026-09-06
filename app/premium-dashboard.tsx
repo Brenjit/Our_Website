@@ -42,6 +42,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { isNativeAndroidApp, nativeAlarm, type NativeAlarmStatus } from "./native-alarm";
 
 type TaskCategory = "Study" | "Productive" | "Entertainment" | "Daily essentials";
 type TaskSchedule = "once" | "daily" | "weekdays" | "weekly";
@@ -613,6 +614,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   const [notificationReminderCount, setNotificationReminderCount] = useState(0);
   const [notificationBusy, setNotificationBusy] = useState<"enable" | "disable" | "test" | "background-test" | "">("");
   const [notificationMessage, setNotificationMessage] = useState("");
+  const [nativeAlarmStatus, setNativeAlarmStatus] = useState<NativeAlarmStatus | null>(null);
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
@@ -627,8 +629,22 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   const playedTimerCuesRef = useRef<Set<string>>(new Set());
   const finishAlarmRef = useRef<{ sessionId: string; vibrationIntervalId: number | null; fallbackIntervalId: number | null } | null>(null);
   const silencedAlarmSessionRef = useRef("");
+  const nativeAlarmSyncKeyRef = useRef("");
+  const nativeAndroid = isNativeAndroidApp();
 
   const syncNotificationStatus = useCallback(async () => {
+    if (isNativeAndroidApp()) {
+      try {
+        const status = await nativeAlarm.status();
+        setNativeAlarmStatus(status);
+        setNotificationDeviceCount(1);
+        setNotificationState(status.notificationsGranted && status.exactAlarmGranted ? "enabled" : "prompt");
+      } catch (err) {
+        setNotificationState("unavailable");
+        setNotificationMessage(err instanceof Error ? err.message : "Couldn’t check Android alarm access");
+      }
+      return;
+    }
     if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
       setNotificationState("unsupported");
       return;
@@ -680,6 +696,24 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   }, []);
 
   const enableNotifications = useCallback(async () => {
+    if (isNativeAndroidApp()) {
+      setNotificationBusy("enable");
+      setNotificationMessage("");
+      try {
+        const status = await nativeAlarm.requestPermissions();
+        setNativeAlarmStatus(status);
+        const ready = status.notificationsGranted && status.exactAlarmGranted;
+        setNotificationState(ready ? "enabled" : "prompt");
+        setNotificationMessage(ready
+          ? "Exact alarms are ready. Timers will ring even when Twogether is closed."
+          : "Allow Twogether in the Android screen that opened, then return here. You may need to tap Enable once more for full-screen alarms.");
+      } catch (err) {
+        setNotificationMessage(err instanceof Error ? err.message : "Couldn’t enable Android alarms");
+      } finally {
+        setNotificationBusy("");
+      }
+      return;
+    }
     if (!notificationPublicKey) {
       await syncNotificationStatus();
       return;
@@ -735,6 +769,19 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   }, [notificationPublicKey, syncNotificationStatus]);
 
   const disableNotifications = useCallback(async () => {
+    if (isNativeAndroidApp()) {
+      setNotificationBusy("disable");
+      try {
+        await nativeAlarm.cancelAll();
+        nativeAlarmSyncKeyRef.current = "none";
+        setNotificationMessage("The current local alarm was cancelled. Android alarm permission remains enabled for future timers.");
+      } catch (err) {
+        setNotificationMessage(err instanceof Error ? err.message : "Couldn’t cancel the alarm");
+      } finally {
+        setNotificationBusy("");
+      }
+      return;
+    }
     setNotificationBusy("disable");
     setNotificationMessage("");
     try {
@@ -761,6 +808,15 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     setNotificationBusy("test");
     setNotificationMessage("");
     try {
+      if (isNativeAndroidApp()) {
+        const status = await nativeAlarm.test();
+        setNativeAlarmStatus(status);
+        nativeAlarmSyncKeyRef.current = "twogether-test";
+        setNotificationMessage(status.exact
+          ? "Test set. Lock the phone or close Twogether—the alarm will ring in 12 seconds."
+          : "Test set, but exact-alarm access is missing. Enable it for reliable timing.");
+        return;
+      }
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
       if (!subscription) throw new Error("Enable notifications on this device first");
@@ -780,6 +836,13 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     setNotificationBusy("background-test");
     setNotificationMessage("");
     try {
+      if (isNativeAndroidApp()) {
+        const status = await nativeAlarm.test();
+        setNativeAlarmStatus(status);
+        nativeAlarmSyncKeyRef.current = "twogether-test";
+        setNotificationMessage("Close Twogether now. The native alarm will ring in 12 seconds with Stop and Snooze controls.");
+        return;
+      }
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
       if (!subscription) throw new Error("Enable notifications on this device first");
@@ -792,6 +855,17 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       setNotificationMessage(err instanceof Error ? err.message : "Couldn’t schedule the background test");
     } finally {
       setNotificationBusy("");
+    }
+  }, []);
+
+  const openNativeFullScreenSettings = useCallback(async () => {
+    setNotificationMessage("");
+    try {
+      const status = await nativeAlarm.openFullScreenSettings();
+      setNativeAlarmStatus(status);
+      setNotificationMessage("Allow full-screen alarms for Twogether, then return to the app.");
+    } catch (err) {
+      setNotificationMessage(err instanceof Error ? err.message : "Couldn’t open full-screen alarm settings");
     }
   }, []);
 
@@ -924,6 +998,18 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     return () => window.clearTimeout(first);
   }, [syncNotificationStatus]);
   useEffect(() => {
+    if (!nativeAndroid) return;
+    const syncAfterSettings = () => {
+      if (document.visibilityState === "visible") void syncNotificationStatus();
+    };
+    window.addEventListener("focus", syncAfterSettings);
+    document.addEventListener("visibilitychange", syncAfterSettings);
+    return () => {
+      window.removeEventListener("focus", syncAfterSettings);
+      document.removeEventListener("visibilitychange", syncAfterSettings);
+    };
+  }, [nativeAndroid, syncNotificationStatus]);
+  useEffect(() => {
     const tick = () => setNow(Date.now());
     const first = window.setTimeout(tick, 0);
     const timer = window.setInterval(tick, 1000);
@@ -1004,6 +1090,10 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     const sessionId = audibleTask.activeSession.id;
     const warningKey = `${sessionId}:warning`;
     if (audibleTimer.remainingSeconds <= 0) {
+      if (nativeAndroid) {
+        stopFinishAlarm();
+        return;
+      }
       if (silencedAlarmSessionRef.current !== sessionId) startFinishAlarm(sessionId);
       return;
     }
@@ -1012,7 +1102,31 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       playedTimerCuesRef.current.add(warningKey);
       playTimerCue("warning");
     }
-  }, [audibleTask, audibleTimer, playTimerCue, startFinishAlarm, stopFinishAlarm]);
+  }, [audibleTask, audibleTimer, nativeAndroid, playTimerCue, startFinishAlarm, stopFinishAlarm]);
+
+  useEffect(() => {
+    if (!nativeAndroid || !data) return;
+    if (!audibleTask?.activeSession || !audibleTimer || audibleTimer.paused) {
+      if (nativeAlarmSyncKeyRef.current !== "none") {
+        nativeAlarmSyncKeyRef.current = "none";
+        void nativeAlarm.cancelAll().catch(() => undefined);
+      }
+      return;
+    }
+    if (audibleTimer.remainingSeconds <= 0) return;
+    const alarmNow = now ?? Date.parse(data.generatedAt);
+    const triggerAt = Math.round((alarmNow + audibleTimer.remainingSeconds * 1000) / 1000) * 1000;
+    const key = `${audibleTask.activeSession.id}:${triggerAt}`;
+    if (nativeAlarmSyncKeyRef.current === key) return;
+    nativeAlarmSyncKeyRef.current = key;
+    void nativeAlarm.schedule(audibleTask.activeSession.id, audibleTask.title, triggerAt).then((status) => {
+      setNativeAlarmStatus(status);
+      if (!status.exact) setNotificationMessage("This timer is scheduled approximately. Enable Android exact alarms for reliable timing.");
+    }).catch((err) => {
+      nativeAlarmSyncKeyRef.current = "";
+      setError(err instanceof Error ? err.message : "Couldn’t schedule the Android alarm");
+    });
+  }, [audibleTask, audibleTimer, data, nativeAndroid, now]);
 
   const persistTaskOrder = useCallback(async (orderedIds: string[]) => {
     try {
@@ -1077,6 +1191,11 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     setError("");
     try {
       const result = await api<{ completed?: boolean; remainingSeconds?: number }>(`/api/tasks/${task.id}/${action === "toggle" ? "complete" : action}`, { method: "POST", body: JSON.stringify({ date: todayKey() }) });
+      if (nativeAndroid && switchingSessionId) await nativeAlarm.cancel(switchingSessionId);
+      if (nativeAndroid && action === "finish" && sessionId) {
+        await nativeAlarm.cancel(sessionId);
+        nativeAlarmSyncKeyRef.current = "none";
+      }
       if (action === "start" || action === "resume") setActiveTab("home");
       if (action === "start") playTimerCue("start");
       if (action === "resume") playTimerCue("resume");
@@ -1105,6 +1224,10 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     setBusyId(pauseTask.id);
     try {
       await api(`/api/tasks/${pauseTask.id}/pause`, { method: "POST", body: JSON.stringify({ category }) });
+      if (nativeAndroid && pauseTask.activeSession?.id) {
+        await nativeAlarm.cancel(pauseTask.activeSession.id);
+        nativeAlarmSyncKeyRef.current = "none";
+      }
       setPauseTask(null);
       await load();
     } catch (err) {
@@ -1351,8 +1474,8 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
 
       {activeTab === "home" && notificationState === "prompt" && <section className="premium-notification-nudge" aria-label="Set up notifications">
         <span><BellRing size={19} /></span>
-        <div><strong>Keep your timers reliable</strong><small>Allow alerts on this device to get scheduled-task and timer-finished reminders even after you close the app.</small></div>
-        <button type="button" onClick={() => void enableNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "enable" ? "Enabling…" : "Enable alerts"}</button>
+        <div><strong>{nativeAndroid ? "Turn on real Android alarms" : "Keep your timers reliable"}</strong><small>{nativeAndroid ? "Allow exact alarms so completed focus sessions ring with a tune, vibration, Stop, and Snooze—even when the app is closed." : "Allow alerts on this device to get scheduled-task and timer-finished reminders even after you close the app."}</small></div>
+        <button type="button" onClick={() => void enableNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "enable" ? "Enabling…" : nativeAndroid ? "Enable alarms" : "Enable alerts"}</button>
         <button type="button" className="premium-nudge-close" onClick={() => setNotificationState("dismissed")} aria-label="Dismiss notification setup for now"><X size={15} /></button>
       </section>}
 
@@ -1459,15 +1582,17 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
         {pinMessage && <div className={`premium-pin-message is-${pinMessage.tone}`} role={pinMessage.tone === "error" ? "alert" : "status"}>{pinMessage.tone === "success" ? <CircleCheck size={15} /> : <AlertTriangle size={15} />}<span>{pinMessage.text}</span></div>}
 
         <section className="premium-notification-settings" aria-labelledby="premium-notification-title">
-          <div className="premium-pin-heading"><span>{notificationState === "enabled" ? <BellRing size={16} /> : notificationState === "blocked" ? <BellOff size={16} /> : <Bell size={16} />}</span><div><strong id="premium-notification-title">Device notifications</strong><small>{notificationState === "enabled" ? notificationReminderCount ? `Background alerts are active, with ${notificationReminderCount} scheduled task reminder${notificationReminderCount === 1 ? "" : "s"}.` : "Alerts are connected. Anytime tasks stay silent until you give them a start time; running focus timers still alert when they finish." : notificationState === "blocked" ? "Notifications are blocked in this browser’s site settings." : notificationState === "dismissed" ? "Permission was not enabled. You can try again whenever you’re ready." : notificationState === "unsupported" ? "This browser cannot receive web push alerts. On iPhone, add Twogether to the Home Screen first." : notificationState === "unavailable" ? "The delivery service is not configured yet." : notificationState === "loading" ? "Checking this device…" : "Get scheduled-task and timer-finished alerts when the app is closed."}</small></div><span className={`premium-notification-status is-${notificationState}`}>{notificationState === "enabled" ? "ON" : notificationState === "loading" ? "…" : "OFF"}</span></div>
+          <div className="premium-pin-heading"><span>{notificationState === "enabled" ? <BellRing size={16} /> : notificationState === "blocked" ? <BellOff size={16} /> : <Bell size={16} />}</span><div><strong id="premium-notification-title">{nativeAndroid ? "Android alarms" : "Device notifications"}</strong><small>{nativeAndroid ? notificationState === "enabled" ? "Exact local alarms are active. A finished timer rings independently of the website and internet connection." : "Enable notification and exact-alarm access for reliable closed-app ringing." : notificationState === "enabled" ? notificationReminderCount ? `Background alerts are active, with ${notificationReminderCount} scheduled task reminder${notificationReminderCount === 1 ? "" : "s"}.` : "Alerts are connected. Anytime tasks stay silent until you give them a start time; running focus timers still alert when they finish." : notificationState === "blocked" ? "Notifications are blocked in this browser’s site settings." : notificationState === "dismissed" ? "Permission was not enabled. You can try again whenever you’re ready." : notificationState === "unsupported" ? "This browser cannot receive web push alerts. On iPhone, add Twogether to the Home Screen first." : notificationState === "unavailable" ? "The delivery service is not configured yet." : notificationState === "loading" ? "Checking this device…" : "Get scheduled-task and timer-finished alerts when the app is closed."}</small></div><span className={`premium-notification-status is-${notificationState}`}>{notificationState === "enabled" ? "ON" : notificationState === "loading" ? "…" : "OFF"}</span></div>
           {notificationState !== "unsupported" && notificationState !== "unavailable" && <div className="premium-notification-actions">
             {notificationState === "enabled" ? <>
-              <button type="button" onClick={() => void testNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "test" ? "Sending…" : "Send test"}</button>
-              <button type="button" className="is-secondary" onClick={() => void testBackgroundNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "background-test" ? "Queuing…" : "Test while closed"}</button>
-              <button type="button" className="is-secondary" onClick={() => void disableNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "disable" ? "Turning off…" : "Turn off here"}</button>
-            </> : notificationState !== "blocked" && <button type="button" onClick={() => void enableNotifications()} disabled={Boolean(notificationBusy) || notificationState === "loading"}>{notificationBusy === "enable" ? "Enabling…" : "Enable on this device"}</button>}
+              <button type="button" onClick={() => void testNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "test" ? "Setting…" : nativeAndroid ? "Test alarm (12s)" : "Send test"}</button>
+              {!nativeAndroid && <button type="button" className="is-secondary" onClick={() => void testBackgroundNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "background-test" ? "Queuing…" : "Test while closed"}</button>}
+              {nativeAndroid && nativeAlarmStatus && !nativeAlarmStatus.fullScreenGranted && <button type="button" className="is-secondary" onClick={() => void openNativeFullScreenSettings()}>Allow lock-screen view</button>}
+              {nativeAndroid && nativeAlarmStatus?.scheduled && <button type="button" className="is-secondary" onClick={() => void disableNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "disable" ? "Cancelling…" : "Cancel current alarm"}</button>}
+              {!nativeAndroid && <button type="button" className="is-secondary" onClick={() => void disableNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "disable" ? "Turning off…" : "Turn off here"}</button>}
+            </> : notificationState !== "blocked" && <button type="button" onClick={() => void enableNotifications()} disabled={Boolean(notificationBusy) || notificationState === "loading"}>{notificationBusy === "enable" ? "Enabling…" : nativeAndroid ? "Enable Android alarms" : "Enable on this device"}</button>}
           </div>}
-          <p className="premium-notification-meta">{notificationDeviceCount ? `${notificationDeviceCount} device${notificationDeviceCount === 1 ? "" : "s"} enabled for ${me.name} · ${notificationReminderCount ? `${notificationReminderCount} timed reminder${notificationReminderCount === 1 ? "" : "s"}` : "No task reminder times set"}` : `No devices enabled for ${me.name}`}</p>
+          <p className="premium-notification-meta">{nativeAndroid ? `Custom ringtone · repeating vibration · 5-minute snooze${nativeAlarmStatus?.fullScreenGranted ? " · lock-screen alarm" : ""}` : notificationDeviceCount ? `${notificationDeviceCount} device${notificationDeviceCount === 1 ? "" : "s"} enabled for ${me.name} · ${notificationReminderCount ? `${notificationReminderCount} timed reminder${notificationReminderCount === 1 ? "" : "s"}` : "No task reminder times set"}` : `No devices enabled for ${me.name}`}</p>
           {notificationMessage && <p className="premium-notification-message" role="status">{notificationMessage}</p>}
         </section>
 
