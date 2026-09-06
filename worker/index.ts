@@ -1,5 +1,6 @@
 /** Cloudflare Worker entry point for Twogether. */
 import handler from "vinext/server/app-router-entry";
+import { sendDueNotifications } from "./push";
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -28,6 +29,18 @@ const worker = {
       return url.pathname.startsWith("/api/")
         ? Response.json({ error: "Something went wrong" }, { status: 500, headers: { "Cache-Control": "no-store" } })
         : new Response("Twogether is temporarily unavailable.", { status: 500, headers: { "Cache-Control": "no-store" } });
+    }
+  },
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    try {
+      await sendDueNotifications(env, controller.scheduledTime);
+    } catch (error) {
+      console.error(JSON.stringify({
+        message: "Scheduled Twogether notification check failed",
+        scheduledAt: new Date(controller.scheduledTime).toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      throw error;
     }
   },
 } satisfies ExportedHandler<Env>;

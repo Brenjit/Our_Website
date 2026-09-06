@@ -14,7 +14,7 @@ export type TaskCategory = (typeof TASK_CATEGORIES)[number];
 export const TASK_SCHEDULES = ["once", "daily", "weekdays", "weekly"] as const;
 export type TaskSchedule = (typeof TASK_SCHEDULES)[number];
 
-export const TASK_ANIMATIONS = ["study", "study-planning", "cooking", "auto"] as const;
+export const TASK_ANIMATIONS = ["study", "study-planning", "cooking", "eating", "sleeping", "meeting", "coding", "class-recording", "auto"] as const;
 export type TaskAnimation = (typeof TASK_ANIMATIONS)[number];
 
 export type ProfileRow = {
@@ -55,6 +55,15 @@ export async function ensureDatabase() {
       profile_id TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       created_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS login_rate_limits (
+      id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL,
+      client_key TEXT NOT NULL,
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      window_started_at TEXT NOT NULL,
+      blocked_until TEXT,
+      updated_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
@@ -97,11 +106,48 @@ export async function ensureDatabase() {
       started_at TEXT NOT NULL,
       ended_at TEXT
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS task_progress (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      date_key TEXT NOT NULL,
+      elapsed_seconds REAL NOT NULL DEFAULT 0,
+      points_earned REAL NOT NULL DEFAULT 0,
+      completion_bonus_awarded INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      timezone TEXT NOT NULL DEFAULT 'UTC',
+      user_agent TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS notification_deliveries (
+      id TEXT PRIMARY KEY,
+      subscription_id TEXT NOT NULL,
+      event_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempted_at TEXT NOT NULL,
+      delivered_at TEXT
+    )`),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_completions_task_date ON completions(task_id, date_key)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_owner_active ON tasks(owner_id, is_archived)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_activity_profile_status ON activity_sessions(profile_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_pauses_activity_open ON activity_pauses(activity_id, ended_at)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_task_progress_task_date ON task_progress(task_id, date_key)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_task_progress_profile_date ON task_progress(profile_id, date_key)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_profile ON push_subscriptions(profile_id)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_deliveries_subscription_event ON notification_deliveries(subscription_id, event_key)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_notification_deliveries_attempted ON notification_deliveries(attempted_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_sessions_profile ON sessions(profile_id)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_login_rate_limits_profile_client ON login_rate_limits(profile_id, client_key)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_login_rate_limits_updated ON login_rate_limits(updated_at)"),
     db.prepare(`UPDATE tasks SET category = CASE category
       WHEN 'Growth' THEN 'Study'
       WHEN 'Fitness' THEN 'Productive'
@@ -179,12 +225,26 @@ export function requireTaskSchedule(value: unknown): TaskSchedule {
   return value as TaskSchedule;
 }
 
-export function suggestTaskAnimation(title: string, category: TaskCategory): TaskAnimation {
+export function suggestTaskAnimation(title: string, category: TaskCategory, profileName = "Brenjit"): TaskAnimation {
   const words = title.toLowerCase();
-  if (/cook|bake|meal|dinner|lunch|breakfast|kitchen|food/.test(words)) return "cooking";
+  const usesBrenjitAnimations = !/^kaveri(?:\s|$)/i.test(profileName.trim());
+  if (usesBrenjitAnimations && /record(?:ing|ed)?|film(?:ing)?\s+(?:a\s+)?class|class\s+(?:video|shoot)|course\s+video|lecture\s+record/i.test(words)) return "class-recording";
+  if (usesBrenjitAnimations && /curiouz|cod(?:e|ing)|program(?:ming)?|develop(?:er|ment|ing)?|software|build(?:ing)?\s+(?:an?\s+)?(?:app|website|web\s*app)|app\s+build|website\s+build|work(?:ing)?\s+(?:on|for)\s+(?:my\s+)?startup/i.test(words)) return "coding";
+  if (/\b(?:meeting|meetings|zoom|conference|stand-?up|sync|one-on-one|video\s+call|team\s+call|client\s+call|office\s+call|google\s+meet|teams\s+call)\b|\b1:1\b/.test(words)) return "meeting";
+  if (/\b(?:sleep|sleeping|nap|napping|bedtime|power\s+nap|go\s+to\s+bed)\b/.test(words)) return "sleeping";
+  if (/cook|bake|kitchen|chef|prepare|preparing|make\s+(?:a\s+)?(?:meal|breakfast|lunch|dinner|food)/.test(words)) return "cooking";
+  if (/\beat(?:ing)?\b|have\s+(?:breakfast|lunch|dinner)|breakfast|lunch|dinner|snack|meal\s*time|food\s*break/.test(words)) return "eating";
   if (/study|read|learn|exam|class|notes|revision|homework|assignment|plan/.test(words) || category === "Study") return "study";
   if (category === "Productive") return "study-planning";
   return "auto";
+}
+
+export function requireTaskAnimation(value: unknown, title: string, category: TaskCategory, profileName: string): TaskAnimation {
+  if (value === undefined || value === null || value === "") return suggestTaskAnimation(title, category, profileName);
+  if (typeof value !== "string" || !TASK_ANIMATIONS.includes(value as TaskAnimation)) {
+    throw new Error("Choose a valid task animation");
+  }
+  return value as TaskAnimation;
 }
 
 export function calculateTaskPoints(category: TaskCategory, elapsedMinutes?: number) {
@@ -196,6 +256,97 @@ export function calculateTaskPoints(category: TaskCategory, elapsedMinutes?: num
 
 export function categoryPointRate(category: TaskCategory) {
   return category === "Entertainment" ? -0.5 : category === "Daily essentials" ? 1 : 2;
+}
+
+type ActiveSessionRow = {
+  id: string;
+  task_id: string;
+  profile_id: string;
+  date_key: string;
+  started_at: string;
+  category: TaskCategory;
+  duration_minutes: number;
+};
+
+type TaskProgressRow = {
+  id: string;
+  elapsed_seconds: number;
+  points_earned: number;
+  completion_bonus_awarded: number;
+};
+
+/** Closes one running segment and folds it into the task's cumulative daily progress. */
+export async function closeActivitySession(
+  db: Awaited<ReturnType<typeof ensureDatabase>>,
+  activityId: string,
+  profileId: string,
+  finishedAt = new Date().toISOString(),
+) {
+  const activity = await db.prepare(`SELECT a.id, a.task_id, a.profile_id, a.date_key, a.started_at,
+      t.category, t.duration_minutes
+    FROM activity_sessions a JOIN tasks t ON t.id = a.task_id
+    WHERE a.id = ? AND a.profile_id = ? AND a.status = 'active'`)
+    .bind(activityId, profileId)
+    .first<ActiveSessionRow>();
+  if (!activity) throw new Error("This routine isn’t currently running");
+
+  const [pauseResult, progress] = await Promise.all([
+    db.prepare(`SELECT category, started_at, ended_at FROM activity_pauses
+      WHERE activity_id = ? ORDER BY started_at`)
+      .bind(activity.id)
+      .all<{ category: TaskCategory; started_at: string; ended_at: string | null }>(),
+    db.prepare(`SELECT id, elapsed_seconds, points_earned, completion_bonus_awarded
+      FROM task_progress WHERE task_id = ? AND date_key = ?`)
+      .bind(activity.task_id, activity.date_key)
+      .first<TaskProgressRow>(),
+  ]);
+
+  const segmentSeconds = Math.max(0, (Date.parse(finishedAt) - Date.parse(activity.started_at)) / 1000);
+  const pauses = pauseResult.results.map((pause) => ({
+    category: pause.category,
+    seconds: Math.max(0, (Date.parse(pause.ended_at ?? finishedAt) - Date.parse(pause.started_at)) / 1000),
+  }));
+  const pausedSeconds = pauses.reduce((sum, pause) => sum + pause.seconds, 0);
+  const activeSeconds = Math.max(0, segmentSeconds - pausedSeconds);
+  const segmentPoints = activeSeconds / 60 * categoryPointRate(activity.category) +
+    pauses.reduce((sum, pause) => sum + pause.seconds / 60 * categoryPointRate(pause.category), 0);
+  const elapsedSeconds = Math.max(0, Number(progress?.elapsed_seconds ?? 0) + activeSeconds);
+  const targetSeconds = activity.duration_minutes * 60;
+  const completed = targetSeconds > 0 && elapsedSeconds >= targetSeconds;
+  const awardBonus = completed && !progress?.completion_bonus_awarded && activity.category !== "Entertainment";
+  const pointsEarned = Math.round((Number(progress?.points_earned ?? 0) + segmentPoints + (awardBonus ? 5 : 0)) * 10) / 10;
+  const bonusAwarded = Boolean(progress?.completion_bonus_awarded) || completed;
+  const progressId = progress?.id ?? crypto.randomUUID();
+
+  const statements = [
+    db.prepare("UPDATE activity_sessions SET status = 'finished', finished_at = ? WHERE id = ? AND status = 'active'")
+      .bind(finishedAt, activity.id),
+    db.prepare("UPDATE activity_pauses SET ended_at = ? WHERE activity_id = ? AND ended_at IS NULL")
+      .bind(finishedAt, activity.id),
+    progress
+      ? db.prepare(`UPDATE task_progress SET elapsed_seconds = ?, points_earned = ?,
+          completion_bonus_awarded = ?, updated_at = ? WHERE id = ?`)
+        .bind(elapsedSeconds, pointsEarned, bonusAwarded ? 1 : 0, finishedAt, progressId)
+      : db.prepare(`INSERT INTO task_progress
+          (id, task_id, profile_id, date_key, elapsed_seconds, points_earned, completion_bonus_awarded, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(progressId, activity.task_id, activity.profile_id, activity.date_key, elapsedSeconds, pointsEarned, bonusAwarded ? 1 : 0, finishedAt),
+  ];
+  if (completed) {
+    statements.push(db.prepare(`INSERT OR IGNORE INTO completions
+      (id, task_id, profile_id, date_key, completed_at, points_earned)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), activity.task_id, activity.profile_id, activity.date_key, finishedAt, pointsEarned));
+  }
+  await db.batch(statements);
+  return {
+    taskId: activity.task_id,
+    completed,
+    elapsedSeconds,
+    elapsedMinutes: Math.round(elapsedSeconds / 6) / 10,
+    remainingSeconds: Math.max(0, targetSeconds - elapsedSeconds),
+    pointsEarned,
+  };
 }
 
 export function validDateKey(value: unknown) {

@@ -43,6 +43,27 @@
       "when": 1787586182013,
       "tag": "0005_organic_mulholland_black",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787631964576,
+      "tag": "0006_empty_thunderbolts",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1788627219858,
+      "tag": "0007_black_maverick",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788628920938,
+      "tag": "0008_clammy_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }

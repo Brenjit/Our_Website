@@ -28,6 +28,23 @@ export const sessions = sqliteTable(
   (table) => [index("idx_sessions_profile").on(table.profileId)],
 );
 
+export const loginRateLimits = sqliteTable(
+  "login_rate_limits",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id").notNull(),
+    clientKey: text("client_key").notNull(),
+    failureCount: integer("failure_count").notNull().default(0),
+    windowStartedAt: text("window_started_at").notNull(),
+    blockedUntil: text("blocked_until"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_login_rate_limits_profile_client").on(table.profileId, table.clientKey),
+    index("idx_login_rate_limits_updated").on(table.updatedAt),
+  ],
+);
+
 export const tasks = sqliteTable(
   "tasks",
   {
@@ -89,4 +106,59 @@ export const activityPauses = sqliteTable(
     endedAt: text("ended_at"),
   },
   (table) => [index("idx_pauses_activity_open").on(table.activityId, table.endedAt)],
+);
+
+export const taskProgress = sqliteTable(
+  "task_progress",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull(),
+    profileId: text("profile_id").notNull(),
+    dateKey: text("date_key").notNull(),
+    elapsedSeconds: real("elapsed_seconds").notNull().default(0),
+    pointsEarned: real("points_earned").notNull().default(0),
+    completionBonusAwarded: integer("completion_bonus_awarded", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_task_progress_task_date").on(table.taskId, table.dateKey),
+    index("idx_task_progress_profile_date").on(table.profileId, table.dateKey),
+  ],
+);
+
+export const pushSubscriptions = sqliteTable(
+  "push_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id").notNull(),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    timezone: text("timezone").notNull().default("UTC"),
+    userAgent: text("user_agent"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_push_subscriptions_endpoint").on(table.endpoint),
+    index("idx_push_subscriptions_profile").on(table.profileId),
+  ],
+);
+
+export const notificationDeliveries = sqliteTable(
+  "notification_deliveries",
+  {
+    id: text("id").primaryKey(),
+    subscriptionId: text("subscription_id").notNull(),
+    eventKey: text("event_key").notNull(),
+    status: text("status").notNull().default("pending"),
+    attemptedAt: text("attempted_at").notNull(),
+    deliveredAt: text("delivered_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_notification_deliveries_subscription_event").on(table.subscriptionId, table.eventKey),
+    index("idx_notification_deliveries_attempted").on(table.attemptedAt),
+  ],
 );

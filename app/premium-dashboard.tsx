@@ -5,6 +5,9 @@ import lottie from "lottie-web";
 import {
   BarChart3,
   AlertTriangle,
+  Bell,
+  BellOff,
+  BellRing,
   BookOpen,
   Briefcase,
   CalendarClock,
@@ -29,6 +32,7 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
+  RotateCcw,
   Sparkles,
   Square,
   Timer,
@@ -37,10 +41,12 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 type TaskCategory = "Study" | "Productive" | "Entertainment" | "Daily essentials";
 type TaskSchedule = "once" | "daily" | "weekdays" | "weekly";
+type TaskAnimation = "study" | "study-planning" | "cooking" | "eating" | "sleeping" | "meeting" | "coding" | "class-recording" | "auto";
+type NotificationState = "loading" | "unsupported" | "unavailable" | "prompt" | "dismissed" | "enabled" | "blocked";
 const TASK_CATEGORIES: TaskCategory[] = ["Study", "Productive", "Entertainment", "Daily essentials"];
 const DURATION_PRESETS = [5, 10, 15, 30, 45, 60] as const;
 const FINISH_ALARM_SRC = "/SFX/ES_Alert%20Tone%2C%20Ringtone%2002%20-%20Epidemic%20Sound.mp3";
@@ -104,9 +110,11 @@ type Task = {
   scheduledDate: string | null;
   scheduledWeekday: number | null;
   scheduledTime: string | null;
-  animationKey: "study" | "study-planning" | "cooking" | "auto";
+  animationKey: TaskAnimation;
   sortOrder: number;
   completedAt: string | null;
+  progressSeconds: number;
+  progressPoints: number;
   activeSession: {
     id: string;
     startedAt: string;
@@ -154,8 +162,16 @@ const LOTTIES = {
   studyMale: "/Lotties/Study_boy.json",
   studyFemale: "/Lotties/Reading%20girl.json",
   studyTogether: "/Lotties/Study%20discussion%20both.json",
-  cooking: "/Lotties/Cooking.json",
+  cookingFemale: "/Lotties/Cooking.json",
+  cookingMale: "/Lotties/Chef_cooking_Male.json",
   cookingTogether: "/Lotties/cooking%20together.json",
+  eatingFemale: "/Lotties/girl_eating.json",
+  eatingMale: "/Lotties/Boy%20eating.json",
+  sleepingFemale: "/Lotties/Sleeping_kaveri.json",
+  sleepingMale: "/Lotties/Sleeping_bren.json",
+  meeting: "/Lotties/meeting.json",
+  codingMale: "/Lotties/Brenjit_coding.json",
+  classMale: "/Lotties/Brenjit_Class.json",
   natureFemale: "/Lotties/Reading%20in%20nature%20GIRL%20(default).json",
   sunrise: "/Lotties/sunrise.json",
 } as const;
@@ -175,10 +191,56 @@ const weekStartKey = () => {
 };
 
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...options?.headers } });
-  const payload = (await response.json()) as T & { error?: string };
+  let response: Response;
+  try {
+    response = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...options?.headers } });
+  } catch {
+    throw new Error("Couldn’t reach Twogether. Check your connection and try again.");
+  }
+  let payload: T & { error?: string };
+  try {
+    payload = (await response.json()) as T & { error?: string };
+  } catch {
+    throw new Error(response.ok ? "Twogether returned an unexpected response" : `Request failed (${response.status})`);
+  }
   if (!response.ok) throw new Error(payload.error || "Something went wrong");
   return payload;
+}
+
+function decodeVapidKey(value: string) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(window.atob(base64), (character) => character.charCodeAt(0));
+}
+
+function subscriptionUsesKey(subscription: PushSubscription, publicKey: string) {
+  const current = subscription.options.applicationServerKey;
+  if (!current) return false;
+  const expected = decodeVapidKey(publicKey);
+  const actual = new Uint8Array(current);
+  return actual.length === expected.length && actual.every((byte, index) => byte === expected[index]);
+}
+
+function handleModalKeyDown(event: ReactKeyboardEvent<HTMLDivElement>, close: () => void) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    close();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+  )).filter((element) => element.getClientRects().length > 0);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function formatPoints(points: number) {
@@ -269,11 +331,12 @@ function countdownState(task: Task, now: number) {
   const openPauseSeconds = task.activeSession.currentPause
     ? Math.max(0, Math.floor((now - Date.parse(task.activeSession.currentPause.startedAt)) / 1000))
     : 0;
-  const elapsedSeconds = Math.max(0, Math.floor(
+  const sessionElapsedSeconds = Math.max(0, Math.floor(
     (now - Date.parse(task.activeSession.startedAt)) / 1000 -
       Math.max(0, Number(task.activeSession.pausedSeconds) || 0) -
       openPauseSeconds,
   ));
+  const elapsedSeconds = Math.max(0, Number(task.progressSeconds) || 0) + sessionElapsedSeconds;
   const remainingSeconds = Math.trunc(task.durationMinutes * 60 - elapsedSeconds);
   const absolute = Math.abs(remainingSeconds);
   const hours = Math.floor(absolute / 3600);
@@ -281,7 +344,7 @@ function countdownState(task: Task, now: number) {
   const seconds = absolute % 60;
   const clock = `${hours ? `${String(hours).padStart(2, "0")}:` : ""}${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   const rate = task.category === "Entertainment" ? -0.5 : task.category === "Daily essentials" ? 1 : 2;
-  const bonus = task.category === "Entertainment" ? 0 : 5;
+  const completionBonus = remainingSeconds <= 0 && task.category !== "Entertainment" ? 5 : 0;
   const pauseRate = task.activeSession.currentPause?.category === "Entertainment"
     ? -0.5
     : task.activeSession.currentPause?.category === "Daily essentials" ? 1 : 2;
@@ -294,8 +357,18 @@ function countdownState(task: Task, now: number) {
     pauseCategory: task.activeSession.currentPause?.category ?? null,
     pauseElapsed: task.activeSession.currentPause ? elapsedLabel(task.activeSession.currentPause.startedAt, now) : null,
     elapsedMinutes: elapsedSeconds / 60,
-    livePoints: Math.round((bonus + (elapsedSeconds / 60) * rate + pausePoints) * 10) / 10,
+    livePoints: Math.round((task.progressPoints + (sessionElapsedSeconds / 60) * rate + pausePoints + completionBonus) * 10) / 10,
   };
+}
+
+function taskProgressState(task: Task, now: number) {
+  const timer = countdownState(task, now);
+  const elapsedSeconds = timer ? timer.elapsedMinutes * 60 : Math.max(0, Number(task.progressSeconds) || 0);
+  const targetSeconds = Math.max(0, task.durationMinutes * 60);
+  const percent = targetSeconds ? Math.min(100, elapsedSeconds / targetSeconds * 100) : task.completedAt ? 100 : 0;
+  const workedMinutes = Math.floor(elapsedSeconds / 60);
+  const remainingMinutes = Math.max(0, Math.ceil((targetSeconds - elapsedSeconds) / 60));
+  return { elapsedSeconds, percent, workedMinutes, remainingMinutes };
 }
 
 function categorySlug(category: TaskCategory) {
@@ -311,25 +384,36 @@ function CategoryIcon({ category, size = 18 }: { category: TaskCategory; size?: 
 
 function visualKind(task: Pick<Task, "title" | "category" | "animationKey"> | null | undefined) {
   if (!task) return null;
-  if (task.animationKey === "cooking" || /cook|bake|meal|dinner|lunch|breakfast|kitchen|food/i.test(task.title)) return "cooking";
-  if (task.animationKey === "study" || task.category === "Study" || /study|read|learn|exam|class|notes|revision|homework|assignment/i.test(task.title)) return "study";
-  if (task.animationKey === "study-planning" || task.category === "Productive") return "planning";
+  if (task.animationKey !== "auto") {
+    if (task.animationKey === "study-planning") return "planning";
+    if (task.animationKey === "class-recording") return "class-recording";
+    return task.animationKey;
+  }
+  if (/record(?:ing|ed)?|film(?:ing)?\s+(?:a\s+)?class|class\s+(?:video|shoot)|course\s+video|lecture\s+record/i.test(task.title)) return "class-recording";
+  if (/curiouz|cod(?:e|ing)|program(?:ming)?|develop(?:er|ment|ing)?|software|build(?:ing)?\s+(?:an?\s+)?(?:app|website|web\s*app)|app\s+build|website\s+build|work(?:ing)?\s+(?:on|for)\s+(?:my\s+)?startup/i.test(task.title)) return "coding";
+  if (/\b(?:meeting|meetings|zoom|conference|stand-?up|sync|one-on-one|video\s+call|team\s+call|client\s+call|office\s+call|google\s+meet|teams\s+call)\b|\b1:1\b/i.test(task.title)) return "meeting";
+  if (/\b(?:sleep|sleeping|nap|napping|bedtime|power\s+nap|go\s+to\s+bed)\b/i.test(task.title)) return "sleeping";
+  if (/cook|bake|kitchen|chef|prepare|preparing|make\s+(?:a\s+)?(?:meal|breakfast|lunch|dinner|food)/i.test(task.title)) return "cooking";
+  if (/\beat(?:ing)?\b|have\s+(?:breakfast|lunch|dinner)|breakfast|lunch|dinner|snack|meal\s*time|food\s*break/i.test(task.title)) return "eating";
+  if (task.category === "Study" || /study|read|learn|exam|class|notes|revision|homework|assignment/i.test(task.title)) return "study";
+  if (task.category === "Productive") return "planning";
   return null;
-}
-
-function suggestedKind(title: string, category: TaskCategory) {
-  return visualKind({ title, category, animationKey: "auto" });
 }
 
 function isKaveri(profile: PublicProfile) {
   return /^kaveri(?:\s|$)/i.test(profile.name.trim());
 }
 
-function lottieFor(task: Task | null | undefined, profile: PublicProfile, together: boolean) {
+function lottieFor(task: Pick<Task, "title" | "category" | "animationKey"> | null | undefined, profile: PublicProfile, together: boolean) {
   const kind = visualKind(task);
-  if (kind === "cooking") return together ? LOTTIES.cookingTogether : LOTTIES.cooking;
+  if (kind === "cooking") return together ? LOTTIES.cookingTogether : isKaveri(profile) ? LOTTIES.cookingFemale : LOTTIES.cookingMale;
+  if (kind === "eating") return isKaveri(profile) ? LOTTIES.eatingFemale : LOTTIES.eatingMale;
+  if (kind === "sleeping") return isKaveri(profile) ? LOTTIES.sleepingFemale : LOTTIES.sleepingMale;
+  if (kind === "meeting") return LOTTIES.meeting;
   if (kind === "study") return together ? LOTTIES.studyTogether : isKaveri(profile) ? LOTTIES.studyFemale : LOTTIES.studyMale;
   if (kind === "planning") return isKaveri(profile) ? LOTTIES.studyFemale : LOTTIES.studyMale;
+  if (kind === "coding") return isKaveri(profile) ? LOTTIES.studyFemale : LOTTIES.codingMale;
+  if (kind === "class-recording") return isKaveri(profile) ? LOTTIES.studyFemale : LOTTIES.classMale;
   return null;
 }
 
@@ -378,6 +462,53 @@ function LottieMotion({ src, paused = false, cover = false, loop = true, classNa
   </div>;
 }
 
+const ANIMATION_LABELS: Record<TaskAnimation | "planning", string> = {
+  auto: "Smart match",
+  study: "Study / reading",
+  "study-planning": "Planning / focus",
+  planning: "Planning / focus",
+  cooking: "Cooking",
+  eating: "Eating / meal time",
+  sleeping: "Sleeping / rest",
+  meeting: "Meeting / call",
+  coding: "Coding on laptop",
+  "class-recording": "Recording a class",
+};
+
+function TaskAnimationPicker({ name, value, onChange, title, category, profile }: {
+  name: string;
+  value: TaskAnimation;
+  onChange: (value: TaskAnimation) => void;
+  title: string;
+  category: TaskCategory;
+  profile: PublicProfile;
+}) {
+  const previewTask = { title, category, animationKey: value };
+  const resolvedKind = visualKind(previewTask);
+  const preview = lottieFor(previewTask, profile, false);
+  const options: Array<{ value: TaskAnimation; label: string; maleOnly?: boolean }> = [
+    { value: "auto", label: "Smart match" },
+    { value: "study", label: "Study / reading" },
+    { value: "study-planning", label: "Planning / focus" },
+    { value: "cooking", label: "Cooking" },
+    { value: "eating", label: "Eating / meal time" },
+    { value: "sleeping", label: "Sleeping / rest" },
+    { value: "meeting", label: "Meeting / call" },
+    { value: "coding", label: "Coding on laptop", maleOnly: true },
+    { value: "class-recording", label: "Recording a class", maleOnly: true },
+  ];
+  const visibleOptions = options.filter((option) => !option.maleOnly || !isKaveri(profile) || option.value === value);
+  const matchLabel = resolvedKind ? ANIMATION_LABELS[resolvedKind] : "Calm focus";
+  return <div className="premium-animation-match">
+    <div className="premium-animation-preview">{preview ? <LottieMotion src={preview} /> : <span className={`premium-fallback-mini ${categorySlug(category)}`}><CategoryIcon category={category} size={27} /></span>}</div>
+    <div className="premium-animation-controls">
+      <span><Sparkles size={12} /> {value === "auto" ? "SMART ANIMATION" : "YOUR ANIMATION"}</span>
+      <strong>{value === "auto" ? `${matchLabel} matched` : matchLabel}</strong>
+      <label><span>Animation</span><select name={name} value={value} onChange={(event) => onChange(event.target.value as TaskAnimation)}>{visibleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+    </div>
+  </div>;
+}
+
 function scheduleLabel(schedule: TaskSchedule) {
   if (schedule === "daily") return "Every day";
   if (schedule === "weekdays") return "Weekdays";
@@ -385,13 +516,15 @@ function scheduleLabel(schedule: TaskSchedule) {
   return "Today";
 }
 
-function QueueTask({ task, busy, now, dragging, isFirst, isLast, onAction, onPause, onEdit, onDragStart, onMove }: {
+function QueueTask({ task, busy, updating, now, dragging, isFirst, isLast, compact, onAction, onPause, onEdit, onDragStart, onMove }: {
   task: Task;
   busy: boolean;
+  updating: boolean;
   now: number;
   dragging: boolean;
   isFirst: boolean;
   isLast: boolean;
+  compact: boolean;
   onAction: (task: Task, action: "toggle" | "start" | "finish" | "resume") => void;
   onPause: (task: Task) => void;
   onEdit: (task: Task) => void;
@@ -401,8 +534,9 @@ function QueueTask({ task, busy, now, dragging, isFirst, isLast, onAction, onPau
   const active = Boolean(task.activeSession);
   const timed = task.durationMinutes > 0;
   const countdown = countdownState(task, now);
+  const progress = taskProgressState(task, now);
   const schedule = scheduleState(task, now);
-  return <article data-task-id={task.id} className={`premium-task category-${categorySlug(task.category)} ${task.completedAt ? "is-done" : ""} ${active ? "is-active" : ""} ${dragging ? "is-dragging" : ""} schedule-${schedule.phase}`}>
+  return <article data-task-id={task.id} className={`premium-task category-${categorySlug(task.category)} ${compact ? "is-compact" : ""} ${task.completedAt ? "is-done" : ""} ${active ? "is-active" : ""} ${dragging ? "is-dragging" : ""} schedule-${schedule.phase}`}>
     <button
       type="button"
       className="premium-drag-handle"
@@ -417,20 +551,22 @@ function QueueTask({ task, busy, now, dragging, isFirst, isLast, onAction, onPau
       type="button"
       className={`premium-task-action ${categorySlug(task.category)}`}
       onClick={() => onAction(task, timed ? countdown?.paused ? "resume" : active ? "finish" : "start" : "toggle")}
-      disabled={Boolean(task.completedAt && timed) || (timed && busy && !active)}
-      aria-label={task.completedAt ? `${task.title} completed` : active ? `Finish ${task.title}` : `Start ${task.title}`}
+      disabled={updating || Boolean(task.completedAt && timed) || (!timed && busy)}
+      aria-label={task.completedAt ? timed ? `${task.title} completed` : `Mark ${task.title} incomplete` : active ? `Finish this ${task.title} session` : busy ? `Switch to ${task.title}` : `${task.progressSeconds ? "Resume" : "Start"} ${task.title}`}
     >
       {task.completedAt ? <Check size={17} strokeWidth={3} /> : countdown?.paused ? <Play size={14} fill="currentColor" /> : active ? <Square size={11} fill="currentColor" /> : <CategoryIcon category={task.category} size={16} />}
     </button>
     <div className="premium-task-copy">
       <div className="premium-task-title-row"><strong>{task.title}</strong><button type="button" onClick={() => onEdit(task)} disabled={active} aria-label={`Edit ${task.title}`}><Pencil size={11} /></button></div>
-      <span><b>{task.category}</b> · {scheduleLabel(task.scheduleType)}{timed ? ` · ${task.durationMinutes} min` : ""}</span>
-      {!task.completedAt && !active && <button type="button" className={`premium-task-schedule ${schedule.phase}`} onClick={() => onEdit(task)}><Clock3 size={9} /><b>{schedule.label}</b> · {schedule.detail}<Pencil size={9} /></button>}
+      {compact ? <span className="premium-task-compact-meta"><b>{task.category}</b>{timed && <><i aria-hidden="true">·</i><span><Clock3 size={10} /> {task.durationMinutes} min</span></>}</span> : <>
+        <span><b>{task.category}</b> · {scheduleLabel(task.scheduleType)} · {schedule.label}</span>
+        {timed ? <div className="premium-task-progress"><span><i style={{ width: `${progress.percent}%` }} /></span><small>{progress.workedMinutes}m of {task.durationMinutes}m · {progress.remainingMinutes ? `${progress.remainingMinutes}m left` : "Goal reached"}</small></div> : !task.completedAt && !active && <button type="button" className={`premium-task-schedule ${schedule.phase}`} onClick={() => onEdit(task)}><Clock3 size={9} /><b>{schedule.label}</b> · {schedule.detail}<Pencil size={9} /></button>}
+      </>}
     </div>
     {countdown ? <div className={`premium-task-live ${countdown.overtime ? "is-overtime" : ""}`}>
       <strong>{countdown.label}</strong>
       <div>{countdown.paused ? <button onClick={() => onAction(task, "resume")}><Play size={11} /> Resume</button> : <button onClick={() => onPause(task)}><Pause size={11} /> Pause</button>}</div>
-    </div> : task.completedAt ? <span className="premium-done-time">Done</span> : timed ? <button className="premium-start-label" onClick={() => onAction(task, "start")} disabled={busy}><Play size={11} fill="currentColor" /> Start</button> : <button className="premium-start-label" onClick={() => onAction(task, "toggle")} disabled={busy}><Check size={11} /> Complete</button>}
+    </div> : task.completedAt ? timed ? <span className="premium-done-time">Done</span> : <button type="button" className="premium-undo-label" onClick={() => onAction(task, "toggle")} disabled={updating}><RotateCcw size={11} /> Undo</button> : timed ? <button type="button" className="premium-start-label" onClick={() => onAction(task, "start")} disabled={updating}><Play size={11} fill="currentColor" /> {busy ? "Switch" : task.progressSeconds > 0 ? "Resume" : "Start"}</button> : <button type="button" className="premium-start-label" onClick={() => onAction(task, "toggle")} disabled={busy || updating}><Check size={11} /> Complete</button>}
   </article>;
 }
 
@@ -439,7 +575,7 @@ function MiniProgress({ done, total }: { done: number; total: number }) {
   return <div className="premium-mini-progress" style={{ "--mini-progress": `${percent * 3.6}deg` } as CSSProperties}><span>{percent}%</span></div>;
 }
 
-export default function PremiumDashboard({ onLogout }: { onLogout: () => void }) {
+export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
@@ -456,6 +592,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [draftScheduled, setDraftScheduled] = useState(false);
   const [draftTime, setDraftTime] = useState(defaultScheduledTime);
   const [draftDuration, setDraftDuration] = useState("30");
+  const [draftAnimation, setDraftAnimation] = useState<TaskAnimation>("auto");
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editCategory, setEditCategory] = useState<TaskCategory>("Study");
@@ -464,11 +601,17 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [editDate, setEditDate] = useState(todayKey);
   const [editScheduled, setEditScheduled] = useState(false);
   const [editTime, setEditTime] = useState(defaultScheduledTime);
+  const [editAnimation, setEditAnimation] = useState<TaskAnimation>("auto");
   const [taskOrder, setTaskOrder] = useState<string[] | null>(null);
   const taskOrderRef = useRef<string[]>([]);
   const [draggingTaskId, setDraggingTaskId] = useState("");
   const [activeTab, setActiveTab] = useState<"home" | "tasks" | "progress" | "activity">("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [notificationState, setNotificationState] = useState<NotificationState>("loading");
+  const [notificationPublicKey, setNotificationPublicKey] = useState("");
+  const [notificationDeviceCount, setNotificationDeviceCount] = useState(0);
+  const [notificationBusy, setNotificationBusy] = useState<"enable" | "disable" | "test" | "">("");
+  const [notificationMessage, setNotificationMessage] = useState("");
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
@@ -476,11 +619,156 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const [confirmPartnerPin, setConfirmPartnerPin] = useState("");
   const [pinBusy, setPinBusy] = useState<"self" | "partner" | "">("");
   const [pinMessage, setPinMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [switchingProfile, setSwitchingProfile] = useState(false);
+  const loadRequestRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const finishAlarmAudioRef = useRef<HTMLAudioElement | null>(null);
   const playedTimerCuesRef = useRef<Set<string>>(new Set());
   const finishAlarmRef = useRef<{ sessionId: string; vibrationIntervalId: number | null; fallbackIntervalId: number | null } | null>(null);
   const silencedAlarmSessionRef = useRef("");
+
+  const syncNotificationStatus = useCallback(async () => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+      setNotificationState("unsupported");
+      return;
+    }
+    try {
+      const status = await api<{ configured: boolean; publicKey: string | null; deviceCount: number }>("/api/notifications");
+      setNotificationDeviceCount(status.deviceCount);
+      if (!status.configured || !status.publicKey) {
+        setNotificationState("unavailable");
+        return;
+      }
+      setNotificationPublicKey(status.publicKey);
+      const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      const subscription = await registration.pushManager.getSubscription();
+      if (Notification.permission === "denied") {
+        setNotificationState("blocked");
+        return;
+      }
+      if (!subscription) {
+        setNotificationState("prompt");
+        return;
+      }
+      if (!subscriptionUsesKey(subscription, status.publicKey)) {
+        const result = await api<{ subscribed: boolean; deviceCount: number }>("/api/notifications", {
+          method: "DELETE",
+          body: JSON.stringify({ endpoint: subscription.endpoint }),
+        });
+        await subscription.unsubscribe();
+        setNotificationDeviceCount(result.deviceCount);
+        setNotificationMessage("Alerts need to be reconnected on this device.");
+        setNotificationState("prompt");
+        return;
+      }
+      const result = await api<{ subscribed: boolean; deviceCount: number }>("/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "subscribe",
+          ...subscription.toJSON(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        }),
+      });
+      setNotificationDeviceCount(result.deviceCount);
+      setNotificationState("enabled");
+    } catch (err) {
+      setNotificationState("unavailable");
+      setNotificationMessage(err instanceof Error ? err.message : "Couldn’t check notification status");
+    }
+  }, []);
+
+  const enableNotifications = useCallback(async () => {
+    if (!notificationPublicKey) {
+      await syncNotificationStatus();
+      return;
+    }
+    setNotificationBusy("enable");
+    setNotificationMessage("");
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission === "denied") {
+        setNotificationState("blocked");
+        setNotificationMessage("Notifications are blocked. Allow them in this browser’s site settings to continue.");
+        return;
+      }
+      if (permission !== "granted") {
+        setNotificationState("dismissed");
+        setNotificationMessage("Notifications were not enabled. You can try again whenever you’re ready.");
+        return;
+      }
+      const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      let subscription = await registration.pushManager.getSubscription();
+      if (subscription && !subscriptionUsesKey(subscription, notificationPublicKey)) {
+        await api("/api/notifications", {
+          method: "DELETE",
+          body: JSON.stringify({ endpoint: subscription.endpoint }),
+        });
+        await subscription.unsubscribe();
+        subscription = null;
+      }
+      subscription ??= await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: decodeVapidKey(notificationPublicKey),
+      });
+      const result = await api<{ subscribed: boolean; deviceCount: number }>("/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "subscribe",
+          ...subscription.toJSON(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        }),
+      });
+      setNotificationState("enabled");
+      setNotificationDeviceCount(result.deviceCount);
+      setNotificationMessage("This device is ready for reminders.");
+    } catch (err) {
+      setNotificationMessage(err instanceof Error ? err.message : "Couldn’t enable notifications");
+    } finally {
+      setNotificationBusy("");
+    }
+  }, [notificationPublicKey, syncNotificationStatus]);
+
+  const disableNotifications = useCallback(async () => {
+    setNotificationBusy("disable");
+    setNotificationMessage("");
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        const result = await api<{ subscribed: boolean; deviceCount: number }>("/api/notifications", {
+          method: "DELETE",
+          body: JSON.stringify({ endpoint: subscription.endpoint }),
+        });
+        await subscription.unsubscribe();
+        setNotificationDeviceCount(result.deviceCount);
+      }
+      setNotificationState("prompt");
+      setNotificationMessage("Notifications are off on this device.");
+    } catch (err) {
+      setNotificationMessage(err instanceof Error ? err.message : "Couldn’t disable notifications");
+    } finally {
+      setNotificationBusy("");
+    }
+  }, []);
+
+  const testNotifications = useCallback(async () => {
+    setNotificationBusy("test");
+    setNotificationMessage("");
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (!subscription) throw new Error("Enable notifications on this device first");
+      await api("/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({ action: "test", endpoint: subscription.endpoint }),
+      });
+      setNotificationMessage("Test sent — it should appear in a moment.");
+    } catch (err) {
+      setNotificationMessage(err instanceof Error ? err.message : "Couldn’t send a test notification");
+    } finally {
+      setNotificationBusy("");
+    }
+  }, []);
 
   const prepareTimerAudio = useCallback(() => {
     if (typeof window === "undefined") return null;
@@ -567,14 +855,16 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     });
   }, [playTimerCue, prepareFinishAlarmAudio, stopFinishAlarm]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    const requestId = ++loadRequestRef.current;
     try {
       const result = await api<DashboardData>(`/api/dashboard?date=${todayKey()}&from=${weekStartKey()}`);
+      if (requestId !== loadRequestRef.current) return;
       setData(result);
       setTaskOrder(null);
-      setError("");
+      if (!silent) setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn’t load your day");
+      if (requestId === loadRequestRef.current && !silent) setError(err instanceof Error ? err.message : "Couldn’t load your day");
     }
   }, []);
 
@@ -589,6 +879,25 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   }, [load]);
 
   useEffect(() => { const first = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(first); }, [load]);
+  useEffect(() => {
+    const syncWhenActive = () => {
+      if (document.visibilityState === "visible") void load({ silent: true });
+    };
+    const timer = window.setInterval(syncWhenActive, 30000);
+    window.addEventListener("focus", syncWhenActive);
+    window.addEventListener("online", syncWhenActive);
+    document.addEventListener("visibilitychange", syncWhenActive);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", syncWhenActive);
+      window.removeEventListener("online", syncWhenActive);
+      document.removeEventListener("visibilitychange", syncWhenActive);
+    };
+  }, [load]);
+  useEffect(() => {
+    const first = window.setTimeout(() => void syncNotificationStatus(), 0);
+    return () => window.clearTimeout(first);
+  }, [syncNotificationStatus]);
   useEffect(() => {
     const tick = () => setNow(Date.now());
     const first = window.setTimeout(tick, 0);
@@ -622,6 +931,35 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     const timer = window.setTimeout(() => setPlannerToast(""), 2400);
     return () => window.clearTimeout(timer);
   }, [plannerToast]);
+
+  const openModalKey = settingsOpen
+    ? "settings"
+    : deleteTarget
+      ? `delete-${deleteTarget === "all" ? "all" : deleteTarget.id}`
+      : pauseTask
+        ? `pause-${pauseTask.id}`
+        : editTask
+          ? `edit-${editTask.id}`
+          : addOpen
+            ? "add"
+            : "";
+
+  useEffect(() => {
+    if (!openModalKey) return;
+    const previousOverflow = document.body.style.overflow;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = "hidden";
+    const frame = window.requestAnimationFrame(() => {
+      const dialogs = document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]');
+      const dialog = dialogs[dialogs.length - 1];
+      dialog?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')?.focus();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus();
+    };
+  }, [openModalKey]);
 
   const me = data?.profiles.find((profile) => profile.isCurrent);
   const partner = data?.profiles.find((profile) => !profile.isCurrent);
@@ -697,7 +1035,15 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     if (action === "start" || action === "resume" || action === "finish") prepareTimerAudio();
     if (action === "start" || action === "resume") unlockFinishAlarmAudio();
     const sessionId = task.activeSession?.id ?? "";
-    if (action === "start") silencedAlarmSessionRef.current = "";
+    const switchingSessionId = action === "start" && me?.busy?.taskId !== task.id
+      ? me?.tasks.find((entry) => entry.id === me.busy?.taskId)?.activeSession?.id ?? ""
+      : "";
+    if (switchingSessionId) {
+      silencedAlarmSessionRef.current = switchingSessionId;
+      stopFinishAlarm();
+    } else if (action === "start") {
+      silencedAlarmSessionRef.current = "";
+    }
     if (action === "finish" && sessionId) {
       silencedAlarmSessionRef.current = sessionId;
       stopFinishAlarm();
@@ -705,13 +1051,19 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     setBusyId(task.id);
     setError("");
     try {
-      await api(`/api/tasks/${task.id}/${action === "toggle" ? "complete" : action}`, { method: "POST", body: JSON.stringify({ date: todayKey() }) });
+      const result = await api<{ completed?: boolean; remainingSeconds?: number }>(`/api/tasks/${task.id}/${action === "toggle" ? "complete" : action}`, { method: "POST", body: JSON.stringify({ date: todayKey() }) });
       if (action === "start" || action === "resume") setActiveTab("home");
       if (action === "start") playTimerCue("start");
       if (action === "resume") playTimerCue("resume");
-      if (action === "finish" || (action === "toggle" && !task.completedAt)) setCompleteToast(task.title);
+      if (action === "finish") {
+        if (result.completed) setCompleteToast(task.title);
+        else setPlannerToast(`Session saved · ${Math.ceil(Number(result.remainingSeconds ?? 0) / 60)} min left`);
+      } else if (action === "toggle" && !task.completedAt) {
+        setCompleteToast(task.title);
+      }
       await load();
     } catch (err) {
+      if (switchingSessionId) silencedAlarmSessionRef.current = "";
       if (action === "finish" && sessionId) {
         silencedAlarmSessionRef.current = "";
         const timerAtFailure = countdownState(task, Date.now());
@@ -750,6 +1102,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
       setDraftScheduled(false);
       setDraftTime(defaultScheduledTime());
       setDraftDuration("30");
+      setDraftAnimation("auto");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t add that routine");
@@ -775,6 +1128,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     setEditDate(task.scheduledDate ?? todayKey());
     setEditScheduled(Boolean(task.scheduledTime));
     setEditTime(task.scheduledTime ?? defaultScheduledTime());
+    setEditAnimation(task.animationKey);
   }
 
   function closeEditTask() {
@@ -788,8 +1142,9 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     setBusyId(`edit-${editTask.id}`);
     setError("");
     try {
-      await api(`/api/tasks/${editTask.id}`, { method: "PATCH", body: JSON.stringify(Object.fromEntries(form.entries())) });
+      const result = await api<{ updated: boolean; reopened: boolean }>(`/api/tasks/${editTask.id}`, { method: "PATCH", body: JSON.stringify(Object.fromEntries(form.entries())) });
       closeEditTask();
+      setPlannerToast(result.reopened ? "More time added · ready to resume" : "Task plan updated");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t save those task changes");
@@ -867,6 +1222,17 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     }
   }
 
+  async function switchProfile() {
+    setSwitchingProfile(true);
+    setError("");
+    try {
+      await onLogout();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t switch profiles");
+      setSwitchingProfile(false);
+    }
+  }
+
   function startTaskDrag(taskId: string, event: ReactPointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -889,7 +1255,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   if (!data || !me || !partner) return <main className="premium-loading">
     <div className="premium-loading-blobs" aria-hidden="true"><i /><i /><i /></div>
     <span className="premium-loading-heart"><Heart size={27} fill="currentColor" /></span>
-    <div className="premium-loading-copy"><strong>two.</strong><p>{error || "Preparing your day…"}</p></div>
+    <div className="premium-loading-copy"><strong>two.</strong><p>{error || (data ? "This shared space needs two profiles." : "Preparing your day…")}</p>{error && <button type="button" onClick={() => void load()}><RefreshCw size={14} /> Try again</button>}</div>
   </main>;
 
   const currentNow = now ?? Date.parse(data.generatedAt);
@@ -910,21 +1276,22 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
   const displayedTask = myTask ?? plannedTask;
   const currentHour = new Date(currentNow).getHours();
   const isMorning = currentHour >= 5 && currentHour < 11;
+  const isSleepTime = currentHour >= 22 || currentHour < 5;
   const focusAnimation = displayedTask
     ? lottieFor(displayedTask, me, together)
-    : isMorning ? LOTTIES.sunrise : isKaveri(me) ? LOTTIES.natureFemale : LOTTIES.studyMale;
+    : isMorning
+      ? LOTTIES.sunrise
+      : isSleepTime
+        ? isKaveri(me) ? LOTTIES.sleepingFemale : LOTTIES.sleepingMale
+        : isKaveri(me) ? LOTTIES.natureFemale : LOTTIES.studyMale;
   const partnerAnimation = partnerTask ? lottieFor(partnerTask, partner, false) : null;
   const progress = myTask && timer && myTask.durationMinutes ? Math.min(100, Math.max(0, (timer.elapsedMinutes / myTask.durationMinutes) * 100)) : 0;
   const maxScore = Math.max(1, Math.abs(me.score), Math.abs(partner.score));
-  const suggestion = suggestedKind(draftTitle, draftCategory);
-  const suggestedAnimation = suggestion === "cooking"
-    ? LOTTIES.cooking
-    : suggestion === "study" ? isKaveri(me) ? LOTTIES.studyFemale : LOTTIES.studyMale
-      : suggestion === "planning" ? isKaveri(me) ? LOTTIES.studyFemale : LOTTIES.studyMale : null;
   const focusStudy = me.focusMinutes.study + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Study" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
   const focusProductive = me.focusMinutes.productive + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Productive" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
   const weekdayName = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date());
   const editWeekdayName = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date(`${editDate}T12:00:00`));
+  const editWillReopen = Boolean(editTask?.completedAt && Number(editDuration) * 60 > Number(editTask.progressSeconds));
   const taskOrderIndex = new Map((taskOrder ?? serverTaskIds).map((id, index) => [id, index]));
   const plannerTasks = [...me.tasks].sort((a, b) => (taskOrderIndex.get(a.id) ?? a.sortOrder) - (taskOrderIndex.get(b.id) ?? b.sortOrder));
 
@@ -932,26 +1299,37 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     <aside className="premium-rail">
       <div className="premium-logo"><Heart size={19} fill="currentColor" /><span>two.</span></div>
       <nav aria-label="Main navigation">
-        <button className={activeTab === "home" ? "active" : ""} onClick={() => setActiveTab("home")} aria-label="Focus"><Home size={19} /><span>Focus</span></button>
-        <button className={activeTab === "tasks" ? "active" : ""} onClick={() => setActiveTab("tasks")} aria-label="Tasks"><CalendarDays size={19} /><span>Tasks</span></button>
-        <button className={activeTab === "progress" ? "active" : ""} onClick={() => setActiveTab("progress")} aria-label="Progress"><BarChart3 size={19} /><span>Progress</span></button>
-        <button className={activeTab === "activity" ? "active" : ""} onClick={() => setActiveTab("activity")} aria-label="Activity"><Clock3 size={19} /><span>Activity</span></button>
+        <button type="button" className={activeTab === "home" ? "active" : ""} onClick={() => setActiveTab("home")} aria-label="Focus" aria-current={activeTab === "home" ? "page" : undefined}><Home size={19} /><span>Focus</span></button>
+        <button type="button" className={activeTab === "tasks" ? "active" : ""} onClick={() => setActiveTab("tasks")} aria-label="Tasks" aria-current={activeTab === "tasks" ? "page" : undefined}><CalendarDays size={19} /><span>Tasks</span></button>
+        <button type="button" className={activeTab === "progress" ? "active" : ""} onClick={() => setActiveTab("progress")} aria-label="Progress" aria-current={activeTab === "progress" ? "page" : undefined}><BarChart3 size={19} /><span>Progress</span></button>
+        <button type="button" className={activeTab === "activity" ? "active" : ""} onClick={() => setActiveTab("activity")} aria-label="Activity" aria-current={activeTab === "activity" ? "page" : undefined}><Clock3 size={19} /><span>Activity</span></button>
       </nav>
       <button className="premium-profile-button" onClick={() => setSettingsOpen(true)} aria-label="Open profile settings"><span className={me.accent}>{me.avatar}</span><KeyRound size={15} /></button>
     </aside>
 
     <main className="premium-page">
       <header className="premium-topbar">
-        <div className="premium-top-identity"><span className="premium-mobile-logo"><Heart size={16} fill="currentColor" /> <b>two.</b></span></div>
+        <div className="premium-top-identity">
+          <span className="premium-mobile-logo"><Heart size={16} fill="currentColor" /> <b>two.</b></span>
+          <div><strong>{activeTab === "home" ? "Today" : activeTab === "tasks" ? "My tasks" : activeTab === "progress" ? "Progress" : "Activity"}</strong><small>{new Intl.DateTimeFormat("en", { weekday: "short", day: "numeric", month: "short" }).format(new Date(currentNow))}</small></div>
+        </div>
         <div className="premium-top-actions">
           <span className="premium-score-pill"><Flame size={15} fill="currentColor" /> {formatPoints(me.score)} pts</span>
           <button type="button" className={`premium-refresh ${refreshing ? "is-refreshing" : ""}`} onClick={() => void refreshDashboard()} disabled={refreshing} aria-label={refreshing ? "Refreshing dashboard" : "Refresh dashboard"} title="Refresh dashboard"><RefreshCw size={15} /><span>{refreshing ? "Refreshing" : "Refresh"}</span></button>
-          <button onClick={() => setAddOpen(true)}><Plus size={16} /> New task</button>
-          <button className="premium-user" onClick={() => setSettingsOpen(true)} aria-label={`Open ${me.name}'s profile settings`}><span className={me.accent}>{me.avatar}</span><b>{me.name}</b></button>
+          <button type="button" className={`premium-notification-button is-${notificationState}`} onClick={() => setSettingsOpen(true)} aria-label={`Notifications: ${notificationState}`} title="Notification settings">{notificationState === "enabled" ? <BellRing size={16} /> : notificationState === "blocked" ? <BellOff size={16} /> : <Bell size={16} />}<span>Alerts</span><i /></button>
+          <button type="button" className="premium-new-task" onClick={() => setAddOpen(true)}><Plus size={16} /> New task</button>
+          <button type="button" className="premium-user" onClick={() => setSettingsOpen(true)} aria-label={`Open ${me.name}'s profile settings`}><span className={me.accent}>{me.avatar}</span><b>{me.name}</b></button>
         </div>
       </header>
 
-      {error && <div className="premium-error" role="alert">{error}<button onClick={() => setError("")}><X size={14} /></button></div>}
+      {error && <div className="premium-error" role="alert">{error}<button type="button" onClick={() => setError("")} aria-label="Dismiss message"><X size={14} /></button></div>}
+
+      {activeTab === "home" && notificationState === "prompt" && <section className="premium-notification-nudge" aria-label="Set up notifications">
+        <span><BellRing size={19} /></span>
+        <div><strong>Keep your timers reliable</strong><small>Allow alerts on this device to get scheduled-task and timer-finished reminders even after you close the app.</small></div>
+        <button type="button" onClick={() => void enableNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "enable" ? "Enabling…" : "Enable alerts"}</button>
+        <button type="button" className="premium-nudge-close" onClick={() => setNotificationState("dismissed")} aria-label="Dismiss notification setup for now"><X size={15} /></button>
+      </section>}
 
       <section className="premium-workspace" id="focus">
         <div className="premium-focus-column">
@@ -983,7 +1361,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             <div className="premium-focus-center">
               <div className="premium-focus-orb" style={{ "--focus-progress": `${progress * 3.6}deg` } as CSSProperties}>
                 <div className="premium-focus-orb-inner">
-                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} cover={!displayedTask && (isMorning || isKaveri(me))} loop={focusAnimation !== LOTTIES.sunrise} className={!displayedTask ? isMorning ? "is-idle-sunrise" : isKaveri(me) ? "is-idle-nature" : "" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
+                  {focusAnimation ? <LottieMotion src={focusAnimation} paused={Boolean(timer?.paused)} cover={!displayedTask && (isMorning || isSleepTime || isKaveri(me))} loop={focusAnimation !== LOTTIES.sunrise} className={!displayedTask ? isMorning ? "is-idle-sunrise" : isSleepTime ? "is-idle-sleep" : isKaveri(me) ? "is-idle-nature" : "" : ""} /> : <div className={`premium-fallback ${displayedTask ? categorySlug(displayedTask.category) : "study"}`}><span><CategoryIcon category={displayedTask?.category ?? "Study"} size={54} /></span><i /><i /><i /></div>}
                 </div>
                 <div className="premium-time-float">
                   <strong>{timer?.label ?? formatCurrentClock(currentNow)}</strong>
@@ -1010,7 +1388,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         </div>
 
         <aside className="premium-day-panel">
-          <div className="premium-day-head"><div><span className="premium-kicker">TODAY</span><h2>Your rhythm</h2></div><div className="premium-day-controls"><button type="button" className="premium-clear-tasks" onClick={() => setDeleteTarget("all")} disabled={!plannerTasks.length || Boolean(me.busy)} aria-label="Clear all my tasks"><Trash2 size={13} /><span>Clear</span></button><MiniProgress done={me.todayCompleted} total={me.totalToday} /></div></div>
+          <div className="premium-day-head"><div><span className="premium-kicker">{activeTab === "tasks" ? "MY TASKS" : "TODAY"}</span><h2>{activeTab === "tasks" ? "Your task list" : "Your rhythm"}</h2></div><div className="premium-day-controls"><button type="button" className="premium-clear-tasks" onClick={() => setDeleteTarget("all")} disabled={!plannerTasks.length || Boolean(me.busy)} aria-label="Clear all my tasks"><Trash2 size={13} /><span>{activeTab === "tasks" ? "Clear all" : "Clear"}</span></button><MiniProgress done={me.todayCompleted} total={me.totalToday} /></div></div>
 
           <div className={`premium-partner-status ${partnerTask ? "is-busy" : ""}`}>
             <span className={`premium-avatar ${partner.accent}`}>{partner.avatar}<i /></span>
@@ -1018,12 +1396,12 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
             {partnerTask && <b>{partnerTimer?.label}</b>}
           </div>
 
-          <div className="premium-planner-hint"><span><GripVertical size={12} /> Drag to reorder</span><span><CalendarClock size={12} /> Tap timing to schedule</span></div>
+          <div className="premium-planner-hint"><span><GripVertical size={12} /> Drag to reorder</span><span>{activeTab === "tasks" ? <><Pencil size={11} /> Edit for more details</> : <><CalendarClock size={12} /> Tap timing to schedule</>}</span></div>
 
           <div className="premium-task-list">
-            {plannerTasks.length ? plannerTasks.map((task, index) => <QueueTask key={task.id} task={task} busy={Boolean(me.busy || busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === plannerTasks.length - 1} onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-empty"><Sparkles size={22} /><strong>Your day is open</strong><p>Add a task and make the first move.</p></div>}
+            {plannerTasks.length ? plannerTasks.map((task, index) => <QueueTask key={task.id} task={task} busy={Boolean(me.busy)} updating={Boolean(busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === plannerTasks.length - 1} compact={activeTab === "tasks"} onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-empty"><Sparkles size={22} /><strong>Your day is open</strong><p>Add a task and make the first move.</p></div>}
           </div>
-          <button className="premium-add-row" onClick={() => setAddOpen(true)}><Plus size={15} /> Add to today</button>
+          <button type="button" className="premium-add-row" onClick={() => setAddOpen(true)}><Plus size={15} /> {activeTab === "tasks" ? "Add task" : "Add to today"}</button>
 
           <section className="premium-race-card">
             <div><span className="premium-kicker">WEEKLY RACE</span><Trophy size={16} /></div>
@@ -1045,15 +1423,27 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
     {completeToast && <div className="premium-complete-toast" role="status"><span><CircleCheck size={20} /></span><div><strong>Beautiful work.</strong><small>{completeToast} completed</small></div></div>}
     {plannerToast && <div className="premium-planner-toast" role="status"><span><CircleCheck size={18} /></span><div><strong>Planner updated</strong><small>{plannerToast}</small></div></div>}
 
-    {settingsOpen && <div className="premium-modal-backdrop premium-settings-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") closeSettings(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) closeSettings(); }}>
+    {settingsOpen && <div className="premium-modal-backdrop premium-settings-backdrop" role="presentation" onKeyDown={(event) => handleModalKeyDown(event, closeSettings)} onMouseDown={(event) => { if (event.target === event.currentTarget) closeSettings(); }}>
       <section className="premium-modal premium-settings-modal" role="dialog" aria-modal="true" aria-labelledby="premium-settings-title">
         <button type="button" className="premium-modal-close" onClick={closeSettings} aria-label="Close profile settings"><X size={17} /></button>
         <div className="premium-settings-identity">
           <span className={`premium-settings-avatar ${me.accent}`}>{me.avatar}</span>
-          <div><span className="premium-kicker">PRIVATE PROFILE</span><h2 id="premium-settings-title">{me.name}&apos;s settings</h2><p>Manage only your sign-in and profile session.</p></div>
+          <div><span className="premium-kicker">PRIVATE PROFILE</span><h2 id="premium-settings-title">{me.name}&apos;s settings</h2><p>Manage sign-in, device alerts, and this profile session.</p></div>
         </div>
 
         {pinMessage && <div className={`premium-pin-message is-${pinMessage.tone}`} role={pinMessage.tone === "error" ? "alert" : "status"}>{pinMessage.tone === "success" ? <CircleCheck size={15} /> : <AlertTriangle size={15} />}<span>{pinMessage.text}</span></div>}
+
+        <section className="premium-notification-settings" aria-labelledby="premium-notification-title">
+          <div className="premium-pin-heading"><span>{notificationState === "enabled" ? <BellRing size={16} /> : notificationState === "blocked" ? <BellOff size={16} /> : <Bell size={16} />}</span><div><strong id="premium-notification-title">Device notifications</strong><small>{notificationState === "enabled" ? "Background alerts are active on this device." : notificationState === "blocked" ? "Notifications are blocked in this browser’s site settings." : notificationState === "dismissed" ? "Permission was not enabled. You can try again whenever you’re ready." : notificationState === "unsupported" ? "This browser cannot receive web push alerts. On iPhone, add Twogether to the Home Screen first." : notificationState === "unavailable" ? "The delivery service is not configured yet." : notificationState === "loading" ? "Checking this device…" : "Get planned-task and timer-finished alerts when the app is closed."}</small></div><span className={`premium-notification-status is-${notificationState}`}>{notificationState === "enabled" ? "ON" : notificationState === "loading" ? "…" : "OFF"}</span></div>
+          {notificationState !== "unsupported" && notificationState !== "unavailable" && <div className="premium-notification-actions">
+            {notificationState === "enabled" ? <>
+              <button type="button" onClick={() => void testNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "test" ? "Sending…" : "Send test"}</button>
+              <button type="button" className="is-secondary" onClick={() => void disableNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "disable" ? "Turning off…" : "Turn off here"}</button>
+            </> : notificationState !== "blocked" && <button type="button" onClick={() => void enableNotifications()} disabled={Boolean(notificationBusy) || notificationState === "loading"}>{notificationBusy === "enable" ? "Enabling…" : "Enable on this device"}</button>}
+          </div>}
+          <p className="premium-notification-meta">{notificationDeviceCount ? `${notificationDeviceCount} device${notificationDeviceCount === 1 ? "" : "s"} enabled for ${me.name}` : `No devices enabled for ${me.name}`}</p>
+          {notificationMessage && <p className="premium-notification-message" role="status">{notificationMessage}</p>}
+        </section>
 
         <form className="premium-pin-section" onSubmit={changeOwnPin}>
           <div className="premium-pin-heading"><span><KeyRound size={16} /></span><div><strong>Change my PIN</strong><small>Confirm your current PIN, then choose 4–8 new digits.</small></div></div>
@@ -1075,18 +1465,18 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
           <button className="premium-pin-submit is-secondary" disabled={Boolean(pinBusy)}>{pinBusy === "partner" ? "Resetting…" : `Set ${partner.name}'s new PIN`}<ChevronRight size={15} /></button>
         </form>}
 
-        <button type="button" className="premium-switch-profile" onClick={onLogout}><LogOut size={14} /> Switch profile</button>
+        <button type="button" className="premium-switch-profile" onClick={() => void switchProfile()} disabled={switchingProfile}><LogOut size={14} /> {switchingProfile ? "Switching…" : "Switch profile"}</button>
       </section>
     </div>}
 
-    {addOpen && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") closeAddTask(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) closeAddTask(); }}>
-      <form className="premium-modal premium-task-modal" onSubmit={addTask}>
+    {addOpen && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => handleModalKeyDown(event, closeAddTask)} onMouseDown={(event) => { if (event.target === event.currentTarget) closeAddTask(); }}>
+      <form className="premium-modal premium-task-modal" role="dialog" aria-modal="true" aria-labelledby="premium-add-title" onSubmit={addTask}>
         <div className="premium-task-modal-bar">
           <button type="button" className="premium-modal-close" onClick={closeAddTask} aria-label="Close"><X size={17} /></button>
           <div><small>NEW TASK</small><strong>Plan your day</strong></div>
           <button className="premium-create-button premium-create-button-top" disabled={busyId === "new"}>{busyId === "new" ? "Adding…" : "Add to my day"}<ChevronRight size={16} /></button>
         </div>
-        <div className="premium-modal-title"><span><Plus size={17} /></span><div><p>CREATE A TASK</p><h2>What will move your day forward?</h2></div></div>
+        <div className="premium-modal-title"><span><Plus size={17} /></span><div><p>CREATE A TASK</p><h2 id="premium-add-title">What will move your day forward?</h2></div></div>
         <label className="premium-field">Task name<input name="title" value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} placeholder="Study calculus, cook dinner…" maxLength={80} required /></label>
         <label className="premium-field">Category<select name="category" value={draftCategory} onChange={(event) => setDraftCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
 
@@ -1110,21 +1500,18 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
           ] as const).map(([value, label, detail, Icon]) => <button type="button" key={value} className={draftSchedule === value ? "selected" : ""} onClick={() => setDraftSchedule(value)} aria-pressed={draftSchedule === value}><Icon size={15} /><span><strong>{label}</strong><small>{detail}</small></span>{draftSchedule === value && <Check size={13} />}</button>)}
         </fieldset>
 
-        <div className="premium-animation-match">
-          <div className="premium-animation-preview">{suggestedAnimation ? <LottieMotion src={suggestedAnimation} /> : <span className={`premium-fallback-mini ${categorySlug(draftCategory)}`}><CategoryIcon category={draftCategory} size={27} /></span>}</div>
-          <div><span><Sparkles size={12} /> SMART ANIMATION</span><strong>{suggestion ? `${suggestion[0].toUpperCase()}${suggestion.slice(1)} matched` : "Calm focus matched"}</strong><p>Chosen automatically from your task name. Add more Lotties anytime to grow the library.</p></div>
-        </div>
+        <TaskAnimationPicker name="animationKey" value={draftAnimation} onChange={setDraftAnimation} title={draftTitle} category={draftCategory} profile={me} />
       </form>
     </div>}
 
-    {editTask && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") closeEditTask(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditTask(); }}>
-      <form className="premium-modal premium-task-modal premium-edit-modal" onSubmit={updateTask}>
+    {editTask && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => handleModalKeyDown(event, closeEditTask)} onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditTask(); }}>
+      <form className="premium-modal premium-task-modal premium-edit-modal" role="dialog" aria-modal="true" aria-labelledby="premium-edit-title" onSubmit={updateTask}>
         <div className="premium-task-modal-bar">
           <button type="button" className="premium-modal-close" onClick={closeEditTask} aria-label="Close"><X size={17} /></button>
           <div><small>EDIT TASK</small><strong>Update your plan</strong></div>
           <button className="premium-create-button premium-create-button-top" disabled={busyId === `edit-${editTask.id}`}>{busyId === `edit-${editTask.id}` ? "Saving…" : "Save changes"}<Check size={16} /></button>
         </div>
-        <div className="premium-modal-title"><span><CalendarClock size={17} /></span><div><p>FLEXIBLE PLANNING</p><h2>Make this task fit your day.</h2></div></div>
+        <div className="premium-modal-title"><span><CalendarClock size={17} /></span><div><p>FLEXIBLE PLANNING</p><h2 id="premium-edit-title">Make this task fit your day.</h2></div></div>
         <label className="premium-field">Task name<input name="title" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={80} required /></label>
         <label className="premium-field">Category<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value as TaskCategory)}>{TASK_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
 
@@ -1136,6 +1523,8 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         {editScheduled && <label className="premium-field premium-native-time-field">Start time<input type="time" value={editTime} onChange={(event) => setEditTime(event.target.value)} required /></label>}
 
         <DurationPicker value={editDuration} onChange={setEditDuration} />
+
+        {editWillReopen && <div className="premium-time-note premium-reopen-note"><Repeat2 size={15} /><span><strong>This task will reopen</strong><small>Your recorded time stays, and Resume will appear with the extra time remaining.</small></span></div>}
 
         <div className="premium-time-note premium-reschedule-note"><CalendarClock size={15} /><span><strong>{editScheduled ? `Scheduled for ${formatClockTime(editTime)}` : "Starts when you tap Start"}</strong><small>{editScheduled ? "The task will be highlighted around this time." : "This task has no fixed start time."}</small></span></div>
 
@@ -1149,21 +1538,22 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => void })
         </fieldset>
 
         <label className={`premium-field premium-date-field ${editSchedule === "once" ? "is-visible" : ""}`}>Scheduled date<input name="dateKey" type="date" value={editDate} onChange={(event) => setEditDate(event.target.value)} required /></label>
-        <div className="premium-edit-footer"><p className="premium-edit-note"><LockKeyhole size={12} /> Previous completions, tracked minutes, and points stay unchanged.</p><button type="button" className="premium-delete-task" onClick={() => setDeleteTarget(editTask)}><Trash2 size={13} /> Delete task</button></div>
+        <TaskAnimationPicker name="animationKey" value={editAnimation} onChange={setEditAnimation} title={editTitle} category={editCategory} profile={me} />
+        <div className="premium-edit-footer"><p className="premium-edit-note"><LockKeyhole size={12} /> Editing this plan keeps previous tracked time and points unchanged.</p><button type="button" className="premium-delete-task" onClick={() => setDeleteTarget(editTask)}><Trash2 size={13} /> Delete task</button></div>
       </form>
     </div>}
 
-    {deleteTarget && <div className="premium-modal-backdrop premium-confirm-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }}>
+    {deleteTarget && <div className="premium-modal-backdrop premium-confirm-backdrop" role="presentation" onKeyDown={(event) => handleModalKeyDown(event, () => setDeleteTarget(null))} onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }}>
       <section className="premium-modal premium-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="premium-delete-title">
         <span className="premium-confirm-icon"><AlertTriangle size={22} /></span>
         <span className="premium-kicker">PLEASE CONFIRM</span>
         <h2 id="premium-delete-title">{deleteTarget === "all" ? "Clear all your tasks?" : `Delete “${deleteTarget.title}”?`}</h2>
-        <p>{deleteTarget === "all" ? "This removes every task from your planner. Kaveri’s tasks are not affected." : "This removes the task from your planner."} Your previous scores and activity history will stay safe.</p>
+        <p>{deleteTarget === "all" ? `This removes every task from your planner, including their tracked time, activity history, and earned points. ${partner.name}’s tasks are not affected.` : "This removes the task together with its tracked time, activity history, and earned points."}</p>
         <div className="premium-confirm-actions"><button type="button" onClick={() => setDeleteTarget(null)}>Keep tasks</button><button type="button" className="danger" onClick={() => void removeTasks()} disabled={busyId.startsWith("delete-")}><Trash2 size={14} /> {busyId.startsWith("delete-") ? "Removing…" : deleteTarget === "all" ? "Clear my tasks" : "Delete task"}</button></div>
       </section>
     </div>}
 
-    {pauseTask && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === "Escape") setPauseTask(null); }} onMouseDown={(event) => { if (event.target === event.currentTarget) setPauseTask(null); }}>
+    {pauseTask && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => handleModalKeyDown(event, () => setPauseTask(null))} onMouseDown={(event) => { if (event.target === event.currentTarget) setPauseTask(null); }}>
       <section className="premium-modal premium-pause-modal" role="dialog" aria-modal="true" aria-labelledby="premium-pause-title">
         <button type="button" className="premium-modal-close" onClick={() => setPauseTask(null)} aria-label="Close"><X size={17} /></button>
         <div className="premium-modal-title"><span><Pause size={17} /></span><div><p>PAUSE TRACKING</p><h2 id="premium-pause-title">What are you switching to?</h2></div></div>

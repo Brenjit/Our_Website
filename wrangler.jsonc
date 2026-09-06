@@ -4,8 +4,14 @@
   "main": "dist/server/index.js",
   "workers_dev": true,
   "preview_urls": false,
-  "compatibility_date": "2026-08-25",
+  "compatibility_date": "2026-05-22",
   "compatibility_flags": ["nodejs_compat"],
+  "secrets": {
+    "required": ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"]
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
   "no_bundle": true,
   "assets": {
     "binding": "ASSETS",

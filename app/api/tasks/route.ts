@@ -5,8 +5,8 @@ import {
   calculateTaskPoints,
   requireText,
   requireTaskCategory,
+  requireTaskAnimation,
   requireTaskSchedule,
-  suggestTaskAnimation,
   unauthorized,
   validDateKey,
   validScheduledTime,
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const scheduledDate = validDateKey(body.dateKey);
     const scheduledWeekday = new Date(`${scheduledDate}T12:00:00Z`).getUTCDay();
     const scheduledTime = validScheduledTime(body.scheduledTime);
-    const animationKey = suggestTaskAnimation(title, category);
+    const animationKey = requireTaskAnimation(body.animationKey, title, category, user.name);
     const db = await ensureDatabase();
     const order = await db
       .prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM tasks WHERE owner_id = ?")
@@ -68,9 +68,22 @@ export async function DELETE(request: Request) {
       .bind(user.id, user.id)
       .first<{ id: string }>();
     if (running) return Response.json({ error: "Finish your running session before clearing your tasks" }, { status: 409 });
-    await db.prepare("UPDATE tasks SET is_archived = 1 WHERE owner_id = ? AND is_archived = 0")
-      .bind(user.id)
-      .run();
+    await db.batch([
+      db.prepare(`DELETE FROM activity_pauses WHERE activity_id IN (
+        SELECT a.id FROM activity_sessions a JOIN tasks t ON t.id = a.task_id
+        WHERE t.owner_id = ?
+      )`).bind(user.id),
+      db.prepare(`DELETE FROM activity_sessions WHERE task_id IN (
+        SELECT id FROM tasks WHERE owner_id = ?
+      )`).bind(user.id),
+      db.prepare(`DELETE FROM completions WHERE task_id IN (
+        SELECT id FROM tasks WHERE owner_id = ?
+      )`).bind(user.id),
+      db.prepare(`DELETE FROM task_progress WHERE task_id IN (
+        SELECT id FROM tasks WHERE owner_id = ?
+      )`).bind(user.id),
+      db.prepare("UPDATE tasks SET is_archived = 1 WHERE owner_id = ? AND is_archived = 0").bind(user.id),
+    ]);
     return Response.json({ cleared: true });
   } catch (error) {
     return jsonError(error);

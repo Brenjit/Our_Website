@@ -33,6 +33,8 @@ type TaskRow = {
   pause_started_at: string | null;
   paused_seconds: number;
   pause_points: number;
+  progress_seconds: number;
+  progress_points: number;
 };
 
 type FocusSessionRow = {
@@ -69,6 +71,8 @@ export async function GET(request: Request) {
     db.prepare(`SELECT t.id, t.owner_id, t.title, t.category, t.duration_minutes, t.points,
         t.schedule_type, t.scheduled_date, t.scheduled_weekday, t.scheduled_time, t.animation_key, t.sort_order,
         c.completed_at,
+        COALESCE(tp.elapsed_seconds, 0) AS progress_seconds,
+        COALESCE(tp.points_earned, 0) AS progress_points,
         a.id AS activity_id, a.started_at,
         ap.id AS pause_id, ap.category AS pause_category, ap.started_at AS pause_started_at,
         COALESCE((SELECT SUM((julianday(closed_pause.ended_at) - julianday(closed_pause.started_at)) * 86400)
@@ -81,6 +85,7 @@ export async function GET(request: Request) {
           WHERE closed_pause.activity_id = a.id AND closed_pause.ended_at IS NOT NULL), 0) AS pause_points
       FROM tasks t
       LEFT JOIN completions c ON c.task_id = t.id AND c.date_key = ?
+      LEFT JOIN task_progress tp ON tp.task_id = t.id AND tp.date_key = ?
       LEFT JOIN activity_sessions a ON a.task_id = t.id AND a.status = 'active'
       LEFT JOIN activity_pauses ap ON ap.activity_id = a.id AND ap.ended_at IS NULL
       WHERE t.is_archived = 0 AND t.owner_id IN (
@@ -93,15 +98,19 @@ export async function GET(request: Request) {
         OR (t.schedule_type = 'once' AND t.scheduled_date = ?)
       )
       ORDER BY t.owner_id, t.sort_order, t.scheduled_time IS NULL, t.scheduled_time, t.created_at`)
-      .bind(date, user.couple_id, weekday, weekday, date)
+      .bind(date, date, user.couple_id, weekday, weekday, date)
       .all<TaskRow>(),
-    db.prepare(`SELECT p.id AS profile_id, COALESCE(SUM(c.points_earned), 0) AS score,
-        COUNT(c.id) AS completed
-      FROM profiles p
-      LEFT JOIN completions c ON c.profile_id = p.id AND c.date_key BETWEEN ? AND ?
-      WHERE p.couple_id = ?
-      GROUP BY p.id`)
-      .bind(from, date, user.couple_id)
+    db.prepare(`SELECT p.id AS profile_id,
+        COALESCE((SELECT SUM(tp.points_earned) FROM task_progress tp
+          WHERE tp.profile_id = p.id AND tp.date_key BETWEEN ? AND ?), 0) +
+        COALESCE((SELECT SUM(c.points_earned) FROM completions c
+          WHERE c.profile_id = p.id AND c.date_key BETWEEN ? AND ?
+          AND NOT EXISTS (SELECT 1 FROM task_progress tp2
+            WHERE tp2.task_id = c.task_id AND tp2.date_key = c.date_key)), 0) AS score,
+        (SELECT COUNT(c2.id) FROM completions c2
+          WHERE c2.profile_id = p.id AND c2.date_key BETWEEN ? AND ?) AS completed
+      FROM profiles p WHERE p.couple_id = ?`)
+      .bind(from, date, from, date, from, date, user.couple_id)
       .all<{ profile_id: string; score: number; completed: number }>(),
     db.prepare(`SELECT c.id, c.completed_at, c.points_earned, c.profile_id,
         p.name AS profile_name, t.title AS task_title, t.category
@@ -186,6 +195,10 @@ export async function GET(request: Request) {
         animationKey: task.animation_key,
         sortOrder: task.sort_order,
         completedAt: task.completed_at,
+        progressSeconds: task.completed_at && !Number(task.progress_seconds)
+          ? task.duration_minutes * 60
+          : Number(task.progress_seconds ?? 0),
+        progressPoints: Number(task.progress_points ?? 0),
         activeSession: task.activity_id
           ? {
               id: task.activity_id,
