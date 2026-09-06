@@ -1,3 +1,6 @@
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
 self.addEventListener("push", (event) => {
   let payload = {};
   try {
@@ -12,10 +15,14 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(title, {
     body,
     tag,
+    timestamp: Date.now(),
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-32.png",
     data: { url },
-    renotify: false,
+    renotify: true,
+    requireInteraction: true,
+    silent: false,
+    vibrate: [700, 180, 700, 180, 1000],
   }));
 });
 

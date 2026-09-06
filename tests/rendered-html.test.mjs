@@ -161,3 +161,61 @@ test("scheduled handler sends both planned-task and finished-timer pushes", asyn
   ]);
   assert.ok(pushRequests.every(({ input, init }) => input === subscription.endpoint && init.method.toUpperCase() === "POST"));
 });
+
+test("scheduled handler delivers a queued closed-app notification test", async () => {
+  const worker = await loadWorker();
+  const vapid = await generateVapidKeys();
+  const deviceKey = createECDH("prime256v1");
+  deviceKey.generateKeys();
+  const job = {
+    id: "subscription-1",
+    profile_id: "profile-1",
+    endpoint: "https://push.example.test/device",
+    p256dh: deviceKey.getPublicKey().toString("base64url"),
+    auth: randomBytes(16).toString("base64url"),
+    timezone: "UTC",
+    event_key: "background-test:test-1",
+  };
+  const updates = [];
+  const database = {
+    prepare(sql) {
+      const statement = {
+        values: [],
+        bind(...values) { this.values = values; return this; },
+        async all() {
+          if (sql.includes("JOIN push_subscriptions")) return { results: [job] };
+          return { results: [] };
+        },
+        async run() {
+          if (sql.includes("UPDATE notification_deliveries")) updates.push(sql);
+          return { meta: { changes: 1 } };
+        },
+      };
+      return statement;
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  const pushRequests = [];
+  globalThis.fetch = async (input, init) => {
+    pushRequests.push({ input: String(input), init });
+    return new Response(null, { status: 201 });
+  };
+  try {
+    await worker.scheduled(
+      { scheduledTime: Date.UTC(2026, 8, 5, 12), cron: "* * * * *", noRetry() {} },
+      {
+        DB: database,
+        VAPID_PUBLIC_KEY: vapid.publicKey,
+        VAPID_PRIVATE_KEY: vapid.privateKey,
+        VAPID_SUBJECT: "mailto:test@example.com",
+      },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(pushRequests.length, 1);
+  assert.equal(pushRequests[0].input, job.endpoint);
+  assert.ok(updates.some((sql) => sql.includes("status = 'pending'")));
+  assert.ok(updates.some((sql) => sql.includes("status = 'delivered'")));
+});

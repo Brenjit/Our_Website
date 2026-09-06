@@ -3,7 +3,7 @@ import { ensureDatabase, getSessionUser, jsonError, unauthorized } from "../_lib
 import { pushIsConfigured, sendWebPush, type StoredPushSubscription } from "../../../worker/push";
 
 type NotificationRequest = {
-  action?: "subscribe" | "test";
+  action?: "subscribe" | "test" | "test-background";
   endpoint?: unknown;
   keys?: { p256dh?: unknown; auth?: unknown };
   timezone?: unknown;
@@ -52,14 +52,21 @@ export async function GET(request: Request) {
   const user = await getSessionUser(request);
   if (!user) return unauthorized();
   const db = await ensureDatabase();
-  const result = await db.prepare("SELECT COUNT(*) AS count FROM push_subscriptions WHERE profile_id = ?")
-    .bind(user.id)
-    .first<{ count: number }>();
+  const [deviceResult, reminderResult] = await Promise.all([
+    db.prepare("SELECT COUNT(*) AS count FROM push_subscriptions WHERE profile_id = ?")
+      .bind(user.id)
+      .first<{ count: number }>(),
+    db.prepare(`SELECT COUNT(*) AS count FROM tasks
+        WHERE owner_id = ? AND is_archived = 0 AND scheduled_time IS NOT NULL`)
+      .bind(user.id)
+      .first<{ count: number }>(),
+  ]);
   const configured = pushIsConfigured(env);
   return Response.json({
     configured,
     publicKey: configured ? env.VAPID_PUBLIC_KEY : null,
-    deviceCount: Number(result?.count ?? 0),
+    deviceCount: Number(deviceResult?.count ?? 0),
+    reminderCount: Number(reminderResult?.count ?? 0),
   });
 }
 
@@ -73,12 +80,22 @@ export async function POST(request: Request) {
     const endpoint = validEndpoint(body.endpoint);
     const db = await ensureDatabase();
 
-    if (body.action === "test") {
+    if (body.action === "test" || body.action === "test-background") {
       const subscription = await db.prepare(`SELECT id, profile_id, endpoint, p256dh, auth, timezone
           FROM push_subscriptions WHERE profile_id = ? AND endpoint = ?`)
         .bind(user.id, endpoint)
         .first<StoredPushSubscription>();
       if (!subscription) throw new Error("Enable notifications on this device first");
+      if (body.action === "test-background") {
+        const eventKey = `background-test:${crypto.randomUUID()}`;
+        const dueAt = new Date(Date.now() + 10_000).toISOString();
+        await db.prepare(`INSERT INTO notification_deliveries
+            (id, subscription_id, event_key, status, attempted_at, delivered_at)
+            VALUES (?, ?, ?, 'queued', ?, NULL)`)
+          .bind(crypto.randomUUID(), subscription.id, eventKey, dueAt)
+          .run();
+        return Response.json({ scheduled: true, dueAt });
+      }
       await sendWebPush(env, subscription, {
         title: "Twogether notifications are ready",
         body: "Scheduled tasks and completed focus timers can now reach this device.",

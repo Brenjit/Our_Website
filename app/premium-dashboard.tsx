@@ -610,7 +610,8 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   const [notificationState, setNotificationState] = useState<NotificationState>("loading");
   const [notificationPublicKey, setNotificationPublicKey] = useState("");
   const [notificationDeviceCount, setNotificationDeviceCount] = useState(0);
-  const [notificationBusy, setNotificationBusy] = useState<"enable" | "disable" | "test" | "">("");
+  const [notificationReminderCount, setNotificationReminderCount] = useState(0);
+  const [notificationBusy, setNotificationBusy] = useState<"enable" | "disable" | "test" | "background-test" | "">("");
   const [notificationMessage, setNotificationMessage] = useState("");
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -633,8 +634,9 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       return;
     }
     try {
-      const status = await api<{ configured: boolean; publicKey: string | null; deviceCount: number }>("/api/notifications");
+      const status = await api<{ configured: boolean; publicKey: string | null; deviceCount: number; reminderCount: number }>("/api/notifications");
       setNotificationDeviceCount(status.deviceCount);
+      setNotificationReminderCount(status.reminderCount);
       if (!status.configured || !status.publicKey) {
         setNotificationState("unavailable");
         return;
@@ -720,7 +722,11 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       });
       setNotificationState("enabled");
       setNotificationDeviceCount(result.deviceCount);
-      setNotificationMessage("This device is ready for reminders.");
+      await api("/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({ action: "test", endpoint: subscription.endpoint }),
+      });
+      setNotificationMessage("Connected — a verification notification was sent to this device.");
     } catch (err) {
       setNotificationMessage(err instanceof Error ? err.message : "Couldn’t enable notifications");
     } finally {
@@ -762,9 +768,28 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
         method: "POST",
         body: JSON.stringify({ action: "test", endpoint: subscription.endpoint }),
       });
-      setNotificationMessage("Test sent — it should appear in a moment.");
+      setNotificationMessage("Test accepted. If it does not appear, allow this browser in your device’s system notification settings.");
     } catch (err) {
       setNotificationMessage(err instanceof Error ? err.message : "Couldn’t send a test notification");
+    } finally {
+      setNotificationBusy("");
+    }
+  }, []);
+
+  const testBackgroundNotifications = useCallback(async () => {
+    setNotificationBusy("background-test");
+    setNotificationMessage("");
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (!subscription) throw new Error("Enable notifications on this device first");
+      await api("/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({ action: "test-background", endpoint: subscription.endpoint }),
+      });
+      setNotificationMessage("Background test queued. Close Twogether now; the alert should arrive within about 90 seconds.");
+    } catch (err) {
+      setNotificationMessage(err instanceof Error ? err.message : "Couldn’t schedule the background test");
     } finally {
       setNotificationBusy("");
     }
@@ -1103,7 +1128,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       setDraftTime(defaultScheduledTime());
       setDraftDuration("30");
       setDraftAnimation("auto");
-      await load();
+      await Promise.all([load(), syncNotificationStatus()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t add that routine");
     } finally {
@@ -1145,7 +1170,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       const result = await api<{ updated: boolean; reopened: boolean }>(`/api/tasks/${editTask.id}`, { method: "PATCH", body: JSON.stringify(Object.fromEntries(form.entries())) });
       closeEditTask();
       setPlannerToast(result.reopened ? "More time added · ready to resume" : "Task plan updated");
-      await load();
+      await Promise.all([load(), syncNotificationStatus()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t save those task changes");
     } finally {
@@ -1163,7 +1188,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       if (!clearingAll) closeEditTask();
       setDeleteTarget(null);
       setPlannerToast(clearingAll ? "Your task list is clear" : "Task removed from your planner");
-      await load();
+      await Promise.all([load(), syncNotificationStatus()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t remove those tasks");
     } finally {
@@ -1434,14 +1459,15 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
         {pinMessage && <div className={`premium-pin-message is-${pinMessage.tone}`} role={pinMessage.tone === "error" ? "alert" : "status"}>{pinMessage.tone === "success" ? <CircleCheck size={15} /> : <AlertTriangle size={15} />}<span>{pinMessage.text}</span></div>}
 
         <section className="premium-notification-settings" aria-labelledby="premium-notification-title">
-          <div className="premium-pin-heading"><span>{notificationState === "enabled" ? <BellRing size={16} /> : notificationState === "blocked" ? <BellOff size={16} /> : <Bell size={16} />}</span><div><strong id="premium-notification-title">Device notifications</strong><small>{notificationState === "enabled" ? "Background alerts are active on this device." : notificationState === "blocked" ? "Notifications are blocked in this browser’s site settings." : notificationState === "dismissed" ? "Permission was not enabled. You can try again whenever you’re ready." : notificationState === "unsupported" ? "This browser cannot receive web push alerts. On iPhone, add Twogether to the Home Screen first." : notificationState === "unavailable" ? "The delivery service is not configured yet." : notificationState === "loading" ? "Checking this device…" : "Get planned-task and timer-finished alerts when the app is closed."}</small></div><span className={`premium-notification-status is-${notificationState}`}>{notificationState === "enabled" ? "ON" : notificationState === "loading" ? "…" : "OFF"}</span></div>
+          <div className="premium-pin-heading"><span>{notificationState === "enabled" ? <BellRing size={16} /> : notificationState === "blocked" ? <BellOff size={16} /> : <Bell size={16} />}</span><div><strong id="premium-notification-title">Device notifications</strong><small>{notificationState === "enabled" ? notificationReminderCount ? `Background alerts are active, with ${notificationReminderCount} scheduled task reminder${notificationReminderCount === 1 ? "" : "s"}.` : "Alerts are connected. Anytime tasks stay silent until you give them a start time; running focus timers still alert when they finish." : notificationState === "blocked" ? "Notifications are blocked in this browser’s site settings." : notificationState === "dismissed" ? "Permission was not enabled. You can try again whenever you’re ready." : notificationState === "unsupported" ? "This browser cannot receive web push alerts. On iPhone, add Twogether to the Home Screen first." : notificationState === "unavailable" ? "The delivery service is not configured yet." : notificationState === "loading" ? "Checking this device…" : "Get scheduled-task and timer-finished alerts when the app is closed."}</small></div><span className={`premium-notification-status is-${notificationState}`}>{notificationState === "enabled" ? "ON" : notificationState === "loading" ? "…" : "OFF"}</span></div>
           {notificationState !== "unsupported" && notificationState !== "unavailable" && <div className="premium-notification-actions">
             {notificationState === "enabled" ? <>
               <button type="button" onClick={() => void testNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "test" ? "Sending…" : "Send test"}</button>
+              <button type="button" className="is-secondary" onClick={() => void testBackgroundNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "background-test" ? "Queuing…" : "Test while closed"}</button>
               <button type="button" className="is-secondary" onClick={() => void disableNotifications()} disabled={Boolean(notificationBusy)}>{notificationBusy === "disable" ? "Turning off…" : "Turn off here"}</button>
             </> : notificationState !== "blocked" && <button type="button" onClick={() => void enableNotifications()} disabled={Boolean(notificationBusy) || notificationState === "loading"}>{notificationBusy === "enable" ? "Enabling…" : "Enable on this device"}</button>}
           </div>}
-          <p className="premium-notification-meta">{notificationDeviceCount ? `${notificationDeviceCount} device${notificationDeviceCount === 1 ? "" : "s"} enabled for ${me.name}` : `No devices enabled for ${me.name}`}</p>
+          <p className="premium-notification-meta">{notificationDeviceCount ? `${notificationDeviceCount} device${notificationDeviceCount === 1 ? "" : "s"} enabled for ${me.name} · ${notificationReminderCount ? `${notificationReminderCount} timed reminder${notificationReminderCount === 1 ? "" : "s"}` : "No task reminder times set"}` : `No devices enabled for ${me.name}`}</p>
           {notificationMessage && <p className="premium-notification-message" role="status">{notificationMessage}</p>}
         </section>
 
@@ -1482,14 +1508,14 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
 
         <fieldset className="premium-start-mode"><legend>Start</legend><input name="scheduledTime" type="hidden" value={draftScheduled ? draftTime : ""} />
           <button type="button" className={!draftScheduled ? "selected" : ""} onClick={() => setDraftScheduled(false)} aria-pressed={!draftScheduled}><Play size={16} /><span><strong>Start anytime</strong><small>Begins when you tap Start</small></span>{!draftScheduled && <Check size={14} />}</button>
-          <button type="button" className={draftScheduled ? "selected" : ""} onClick={() => setDraftScheduled(true)} aria-pressed={draftScheduled}><CalendarClock size={16} /><span><strong>Scheduled</strong><small>Set a planned start time</small></span>{draftScheduled && <Check size={14} />}</button>
+          <button type="button" className={draftScheduled ? "selected" : ""} onClick={() => setDraftScheduled(true)} aria-pressed={draftScheduled}><CalendarClock size={16} /><span><strong>Scheduled</strong><small>Set a time and get reminded</small></span>{draftScheduled && <Check size={14} />}</button>
         </fieldset>
 
         {draftScheduled && <label className="premium-field premium-native-time-field">Start time<input type="time" value={draftTime} onChange={(event) => setDraftTime(event.target.value)} required /></label>}
 
         <DurationPicker value={draftDuration} onChange={setDraftDuration} />
 
-        <div className="premium-time-note"><Clock3 size={15} /><span><strong>{draftScheduled ? `Scheduled for ${formatClockTime(draftTime)}` : "Starts when you tap Start"}</strong><small>{draftScheduled ? "It will be highlighted when the planned time arrives." : "No clock time is required."}</small></span></div>
+        <div className="premium-time-note"><Clock3 size={15} /><span><strong>{draftScheduled ? `Scheduled for ${formatClockTime(draftTime)}` : "Starts when you tap Start"}</strong><small>{draftScheduled ? "Twogether will alert enabled devices at this time, even when closed." : "Anytime tasks do not send a start-time notification."}</small></span></div>
 
         <fieldset className="premium-schedule"><legend>Repeat</legend><input type="hidden" name="scheduleType" value={draftSchedule} /><input type="hidden" name="dateKey" value={todayKey()} />
           {([
@@ -1517,7 +1543,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
 
         <fieldset className="premium-start-mode"><legend>Start</legend><input name="scheduledTime" type="hidden" value={editScheduled ? editTime : ""} />
           <button type="button" className={!editScheduled ? "selected" : ""} onClick={() => setEditScheduled(false)} aria-pressed={!editScheduled}><Play size={16} /><span><strong>Start anytime</strong><small>Begins when you tap Start</small></span>{!editScheduled && <Check size={14} />}</button>
-          <button type="button" className={editScheduled ? "selected" : ""} onClick={() => setEditScheduled(true)} aria-pressed={editScheduled}><CalendarClock size={16} /><span><strong>Scheduled</strong><small>Set a planned start time</small></span>{editScheduled && <Check size={14} />}</button>
+          <button type="button" className={editScheduled ? "selected" : ""} onClick={() => setEditScheduled(true)} aria-pressed={editScheduled}><CalendarClock size={16} /><span><strong>Scheduled</strong><small>Set a time and get reminded</small></span>{editScheduled && <Check size={14} />}</button>
         </fieldset>
 
         {editScheduled && <label className="premium-field premium-native-time-field">Start time<input type="time" value={editTime} onChange={(event) => setEditTime(event.target.value)} required /></label>}
@@ -1526,7 +1552,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
 
         {editWillReopen && <div className="premium-time-note premium-reopen-note"><Repeat2 size={15} /><span><strong>This task will reopen</strong><small>Your recorded time stays, and Resume will appear with the extra time remaining.</small></span></div>}
 
-        <div className="premium-time-note premium-reschedule-note"><CalendarClock size={15} /><span><strong>{editScheduled ? `Scheduled for ${formatClockTime(editTime)}` : "Starts when you tap Start"}</strong><small>{editScheduled ? "The task will be highlighted around this time." : "This task has no fixed start time."}</small></span></div>
+        <div className="premium-time-note premium-reschedule-note"><CalendarClock size={15} /><span><strong>{editScheduled ? `Scheduled for ${formatClockTime(editTime)}` : "Starts when you tap Start"}</strong><small>{editScheduled ? "Twogether will alert enabled devices at this time, even when closed." : "Anytime tasks do not send a start-time notification."}</small></span></div>
 
         <fieldset className="premium-schedule"><legend>Repeat</legend><input type="hidden" name="scheduleType" value={editSchedule} />
           {([

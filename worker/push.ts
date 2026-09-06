@@ -16,6 +16,10 @@ export type StoredPushSubscription = {
   timezone: string;
 };
 
+type QueuedNotificationRow = StoredPushSubscription & {
+  event_key: string;
+};
+
 type PlannedTaskRow = {
   id: string;
   owner_id: string;
@@ -177,6 +181,28 @@ async function deliver(
   }
 }
 
+async function deliverQueuedTest(env: Env, job: QueuedNotificationRow, now: Date) {
+  const claim = await env.DB.prepare(`UPDATE notification_deliveries
+      SET status = 'pending', attempted_at = ?
+      WHERE subscription_id = ? AND event_key = ? AND status = 'queued'`)
+    .bind(now.toISOString(), job.id, job.event_key)
+    .run();
+  if (Number(claim.meta.changes ?? 0) === 0) return false;
+  try {
+    await sendWebPush(env, job, {
+      title: "Twogether background test",
+      body: "This arrived through the same closed-app path as a completed focus timer.",
+      tag: job.event_key,
+      url: "/",
+    });
+    await markDelivered(env.DB, job.id, job.event_key, now);
+    return true;
+  } catch (error) {
+    await handleFailedDelivery(env.DB, job, job.event_key, error);
+    return false;
+  }
+}
+
 export async function sendDueNotifications(env: Env, scheduledTime: number) {
   if (!pushIsConfigured(env)) {
     console.warn(JSON.stringify({ message: "Skipping scheduled notifications because VAPID is not configured" }));
@@ -184,7 +210,7 @@ export async function sendDueNotifications(env: Env, scheduledTime: number) {
   }
 
   const now = new Date(scheduledTime);
-  const [subscriptionResult, plannedTaskResult, timerResult] = await Promise.all([
+  const [subscriptionResult, plannedTaskResult, timerResult, queuedTestResult] = await Promise.all([
     env.DB.prepare(`SELECT id, profile_id, endpoint, p256dh, auth, timezone
       FROM push_subscriptions`).all<StoredPushSubscription>(),
     env.DB.prepare(`SELECT id, owner_id, title, category, duration_minutes,
@@ -203,6 +229,15 @@ export async function sendDueNotifications(env: Env, scheduledTime: number) {
       LEFT JOIN activity_pauses ap ON ap.activity_id = a.id
       WHERE a.status = 'active' AND t.duration_minutes > 0
       GROUP BY a.id`).all<ActiveTimerRow>(),
+    env.DB.prepare(`SELECT s.id, s.profile_id, s.endpoint, s.p256dh, s.auth, s.timezone,
+        d.event_key
+      FROM notification_deliveries d
+      JOIN push_subscriptions s ON s.id = d.subscription_id
+      WHERE d.status = 'queued' AND d.attempted_at <= ?
+      ORDER BY d.attempted_at
+      LIMIT 20`)
+      .bind(now.toISOString())
+      .all<QueuedNotificationRow>(),
   ]);
 
   const tasksByProfile = new Map<string, PlannedTaskRow[]>();
@@ -214,6 +249,9 @@ export async function sendDueNotifications(env: Env, scheduledTime: number) {
 
   const timersByProfile = new Map(timerResult.results.map((timer) => [timer.profile_id, timer]));
   let delivered = 0;
+  for (const job of queuedTestResult.results) {
+    if (await deliverQueuedTest(env, job, now)) delivered += 1;
+  }
   for (const subscription of subscriptionResult.results) {
     let clock: ReturnType<typeof localClock>;
     try {
