@@ -1,6 +1,6 @@
 import {
   closeActivitySession,
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   jsonError,
   unauthorized,
@@ -14,7 +14,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const body = (await request.json()) as Record<string, unknown>;
     validDateKey(body.date);
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const task = await db.prepare(`SELECT id FROM tasks
       WHERE id = ? AND owner_id = ? AND is_archived = 0`)
       .bind(id, user.id)

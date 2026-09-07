@@ -1,5 +1,5 @@
 import {
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   jsonError,
   requireTaskCategory,
@@ -13,7 +13,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const body = (await request.json()) as Record<string, unknown>;
     const pauseCategory = requireTaskCategory(body.category);
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const activity = await db.prepare(`SELECT a.id, t.category
       FROM activity_sessions a
       JOIN tasks t ON t.id = a.task_id

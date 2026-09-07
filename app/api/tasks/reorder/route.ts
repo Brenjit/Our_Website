@@ -1,4 +1,4 @@
-import { ensureDatabase, getSessionUser, jsonError, unauthorized } from "../../_lib/server";
+import { getDatabase, getSessionUser, jsonError, unauthorized } from "../../_lib/server";
 
 export async function POST(request: Request) {
   const user = await getSessionUser(request);
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     if (orderedIds.length !== body.orderedIds.length || new Set(orderedIds).size !== orderedIds.length) {
       throw new Error("Choose a valid task order");
     }
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const owned = orderedIds.length
       ? await db.prepare(`SELECT id FROM tasks WHERE owner_id = ? AND is_archived = 0
           AND id IN (${orderedIds.map(() => "?").join(",")})`)

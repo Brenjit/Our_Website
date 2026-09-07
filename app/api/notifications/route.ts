@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { ensureDatabase, getSessionUser, jsonError, unauthorized } from "../_lib/server";
+import { getDatabase, getSessionUser, jsonError, unauthorized } from "../_lib/server";
 import { pushIsConfigured, sendWebPush, type StoredPushSubscription } from "../../../worker/push";
 
 type NotificationRequest = {
@@ -51,7 +51,7 @@ function validTimezone(value: unknown) {
 export async function GET(request: Request) {
   const user = await getSessionUser(request);
   if (!user) return unauthorized();
-  const db = await ensureDatabase();
+  const db = getDatabase();
   const [deviceResult, reminderResult] = await Promise.all([
     db.prepare("SELECT COUNT(*) AS count FROM push_subscriptions WHERE profile_id = ?")
       .bind(user.id)
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json<NotificationRequest>();
     const endpoint = validEndpoint(body.endpoint);
-    const db = await ensureDatabase();
+    const db = getDatabase();
 
     if (body.action === "test" || body.action === "test-background") {
       const subscription = await db.prepare(`SELECT id, profile_id, endpoint, p256dh, auth, timezone
@@ -137,7 +137,7 @@ export async function DELETE(request: Request) {
   try {
     const body = await request.json<{ endpoint?: unknown }>();
     const endpoint = validEndpoint(body.endpoint);
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const subscription = await db.prepare("SELECT id FROM push_subscriptions WHERE profile_id = ? AND endpoint = ?")
       .bind(user.id, endpoint)
       .first<{ id: string }>();

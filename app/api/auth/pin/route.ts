@@ -1,5 +1,5 @@
 import {
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   hashPin,
   jsonError,
@@ -23,7 +23,7 @@ export async function PATCH(request: Request) {
     const newPin = requirePin(body.newPin, "New PIN");
     if (currentPin === newPin) throw new Error("Choose a PIN different from your current PIN");
 
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const profile = await db
       .prepare("SELECT pin_salt, pin_hash FROM profiles WHERE id = ?")
       .bind(user.id)

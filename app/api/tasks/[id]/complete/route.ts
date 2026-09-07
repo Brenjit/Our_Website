@@ -1,5 +1,5 @@
 import {
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   jsonError,
   calculateTaskPoints,
@@ -15,7 +15,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const body = (await request.json()) as Record<string, unknown>;
     const date = validDateKey(body.date);
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const task = await db.prepare(`SELECT id, category, duration_minutes FROM tasks
       WHERE id = ? AND owner_id = ? AND is_archived = 0`)
       .bind(id, user.id)

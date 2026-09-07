@@ -1,6 +1,6 @@
 import {
   calculateTaskPoints,
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   jsonError,
   requireTaskCategory,
@@ -29,7 +29,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       ? calculateTaskPoints(category, durationMinutes)
       : calculateTaskPoints(category);
     const animationKey = requireTaskAnimation(body.animationKey, title, category, user.name);
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const task = await db.prepare(`SELECT t.id, t.category, t.duration_minutes,
         EXISTS(SELECT 1 FROM activity_sessions a WHERE a.task_id = t.id AND a.status = 'active') AS is_running
       FROM tasks t WHERE t.id = ? AND t.owner_id = ? AND t.is_archived = 0`)
@@ -104,7 +104,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   if (!user) return unauthorized();
   try {
     const { id } = await context.params;
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const task = await db.prepare(`SELECT t.id,
         EXISTS(SELECT 1 FROM activity_sessions a WHERE a.task_id = t.id AND a.status = 'active') AS is_running
       FROM tasks t WHERE t.id = ? AND t.owner_id = ? AND t.is_archived = 0`)

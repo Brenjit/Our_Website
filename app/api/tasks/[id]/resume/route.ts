@@ -1,5 +1,5 @@
 import {
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   jsonError,
   unauthorized,
@@ -10,7 +10,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!user) return unauthorized();
   try {
     const { id } = await context.params;
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const pause = await db.prepare(`SELECT ap.id
       FROM activity_pauses ap
       JOIN activity_sessions a ON a.id = ap.activity_id

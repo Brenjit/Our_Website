@@ -1,7 +1,7 @@
-import { ensureDatabase, getSessionUser } from "../../_lib/server";
+import { getDatabase, getSessionUser } from "../../_lib/server";
 
 export async function GET(request: Request) {
-  const db = await ensureDatabase();
+  const db = getDatabase();
   const couple = await db.prepare("SELECT id, name FROM couples LIMIT 1").first<{ id: string; name: string }>();
   if (!couple) return Response.json({ configured: false, user: null, profiles: [] });
 

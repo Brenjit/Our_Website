@@ -1,6 +1,6 @@
 import {
   closeActivitySession,
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   jsonError,
   unauthorized,
@@ -14,7 +14,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const body = (await request.json()) as Record<string, unknown>;
     const date = validDateKey(body.date);
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const task = await db.prepare(`SELECT t.id, t.duration_minutes,
         EXISTS(SELECT 1 FROM completions c WHERE c.task_id = t.id AND c.date_key = ?) AS is_complete
       FROM tasks t

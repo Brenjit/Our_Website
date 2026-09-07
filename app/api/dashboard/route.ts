@@ -1,5 +1,5 @@
 import {
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   unauthorized,
   validDateKey,
@@ -61,7 +61,7 @@ export async function GET(request: Request) {
   const date = validDateKey(url.searchParams.get("date"));
   const from = validDateKey(url.searchParams.get("from"));
   const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
-  const db = await ensureDatabase();
+  const db = getDatabase();
 
   const now = new Date().toISOString();
   const [profileResult, taskResult, scoreResult, activityResult, focusSessionResult, focusPauseResult] = await Promise.all([

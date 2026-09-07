@@ -1,5 +1,5 @@
 import {
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   jsonError,
   calculateTaskPoints,
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
     const scheduledWeekday = new Date(`${scheduledDate}T12:00:00Z`).getUTCDay();
     const scheduledTime = validScheduledTime(body.scheduledTime);
     const animationKey = requireTaskAnimation(body.animationKey, title, category, user.name);
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const order = await db
       .prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM tasks WHERE owner_id = ?")
       .bind(user.id)
@@ -61,7 +61,7 @@ export async function DELETE(request: Request) {
   const user = await getSessionUser(request);
   if (!user) return unauthorized();
   try {
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const running = await db.prepare(`SELECT a.id FROM activity_sessions a
       JOIN tasks t ON t.id = a.task_id
       WHERE a.profile_id = ? AND t.owner_id = ? AND a.status = 'active' LIMIT 1`)

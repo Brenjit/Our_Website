@@ -1,6 +1,6 @@
 import {
   createSessionCookie,
-  ensureDatabase,
+  getDatabase,
   hashPin,
   jsonError,
   requireText,
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as Record<string, unknown>;
     const profileId = requireText(body.profileId, "Profile");
     const pin = requireText(body.pin, "PIN", 12);
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const profile = await db
       .prepare("SELECT id, pin_salt, pin_hash FROM profiles WHERE id = ?")
       .bind(profileId)

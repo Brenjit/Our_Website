@@ -65,7 +65,10 @@ export const tasks = sqliteTable(
       .default(false),
     createdAt: text("created_at").notNull(),
   },
-  (table) => [index("idx_tasks_owner_active").on(table.ownerId, table.isArchived)],
+  (table) => [
+    index("idx_tasks_owner_active").on(table.ownerId, table.isArchived),
+    index("idx_tasks_reminder_schedule").on(table.isArchived, table.scheduledTime),
+  ],
 );
 
 export const completions = sqliteTable(
@@ -78,7 +81,10 @@ export const completions = sqliteTable(
     completedAt: text("completed_at").notNull(),
     pointsEarned: real("points_earned").notNull(),
   },
-  (table) => [uniqueIndex("idx_completions_task_date").on(table.taskId, table.dateKey)],
+  (table) => [
+    uniqueIndex("idx_completions_task_date").on(table.taskId, table.dateKey),
+    index("idx_completions_profile_date").on(table.profileId, table.dateKey),
+  ],
 );
 
 export const activitySessions = sqliteTable(
@@ -92,7 +98,11 @@ export const activitySessions = sqliteTable(
     finishedAt: text("finished_at"),
     status: text("status").notNull(),
   },
-  (table) => [index("idx_activity_profile_status").on(table.profileId, table.status)],
+  (table) => [
+    index("idx_activity_profile_status").on(table.profileId, table.status),
+    index("idx_activity_task_status").on(table.taskId, table.status),
+    index("idx_activity_profile_date_status").on(table.profileId, table.dateKey, table.status),
+  ],
 );
 
 export const activityPauses = sqliteTable(
@@ -160,5 +170,6 @@ export const notificationDeliveries = sqliteTable(
   (table) => [
     uniqueIndex("idx_notification_deliveries_subscription_event").on(table.subscriptionId, table.eventKey),
     index("idx_notification_deliveries_attempted").on(table.attemptedAt),
+    index("idx_notification_deliveries_status_attempted").on(table.status, table.attemptedAt),
   ],
 );

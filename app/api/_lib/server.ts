@@ -27,158 +27,9 @@ export type ProfileRow = {
 
 export type SessionUser = ProfileRow & { token: string };
 
-function getDatabase() {
+export function getDatabase() {
   if (!env.DB) throw new Error("The D1 database binding is unavailable.");
   return env.DB;
-}
-
-export async function ensureDatabase() {
-  const db = getDatabase();
-  await db.batch([
-    db.prepare(`CREATE TABLE IF NOT EXISTS couples (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS profiles (
-      id TEXT PRIMARY KEY,
-      couple_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      avatar TEXT NOT NULL,
-      accent TEXT NOT NULL,
-      pin_salt TEXT NOT NULL,
-      pin_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS sessions (
-      token TEXT PRIMARY KEY,
-      profile_id TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS login_rate_limits (
-      id TEXT PRIMARY KEY,
-      profile_id TEXT NOT NULL,
-      client_key TEXT NOT NULL,
-      failure_count INTEGER NOT NULL DEFAULT 0,
-      window_started_at TEXT NOT NULL,
-      blocked_until TEXT,
-      updated_at TEXT NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      owner_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      category TEXT NOT NULL,
-      duration_minutes INTEGER NOT NULL DEFAULT 0,
-      points REAL NOT NULL DEFAULT 5,
-      schedule_type TEXT NOT NULL DEFAULT 'daily',
-      scheduled_date TEXT,
-      scheduled_weekday INTEGER,
-      scheduled_time TEXT,
-      animation_key TEXT NOT NULL DEFAULT 'auto',
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      is_archived INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS completions (
-      id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      date_key TEXT NOT NULL,
-      completed_at TEXT NOT NULL,
-      points_earned REAL NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS activity_sessions (
-      id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      date_key TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      finished_at TEXT,
-      status TEXT NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS activity_pauses (
-      id TEXT PRIMARY KEY,
-      activity_id TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      category TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      ended_at TEXT
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS task_progress (
-      id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      date_key TEXT NOT NULL,
-      elapsed_seconds REAL NOT NULL DEFAULT 0,
-      points_earned REAL NOT NULL DEFAULT 0,
-      completion_bonus_awarded INTEGER NOT NULL DEFAULT 0,
-      updated_at TEXT NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS push_subscriptions (
-      id TEXT PRIMARY KEY,
-      profile_id TEXT NOT NULL,
-      endpoint TEXT NOT NULL,
-      p256dh TEXT NOT NULL,
-      auth TEXT NOT NULL,
-      timezone TEXT NOT NULL DEFAULT 'UTC',
-      user_agent TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS notification_deliveries (
-      id TEXT PRIMARY KEY,
-      subscription_id TEXT NOT NULL,
-      event_key TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      attempted_at TEXT NOT NULL,
-      delivered_at TEXT
-    )`),
-    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_completions_task_date ON completions(task_id, date_key)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_owner_active ON tasks(owner_id, is_archived)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_activity_profile_status ON activity_sessions(profile_id, status)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_pauses_activity_open ON activity_pauses(activity_id, ended_at)"),
-    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_task_progress_task_date ON task_progress(task_id, date_key)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_task_progress_profile_date ON task_progress(profile_id, date_key)"),
-    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_profile ON push_subscriptions(profile_id)"),
-    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_deliveries_subscription_event ON notification_deliveries(subscription_id, event_key)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_notification_deliveries_attempted ON notification_deliveries(attempted_at)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_sessions_profile ON sessions(profile_id)"),
-    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_login_rate_limits_profile_client ON login_rate_limits(profile_id, client_key)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_login_rate_limits_updated ON login_rate_limits(updated_at)"),
-    db.prepare(`UPDATE tasks SET category = CASE category
-      WHEN 'Growth' THEN 'Study'
-      WHEN 'Fitness' THEN 'Productive'
-      WHEN 'Wellness' THEN 'Daily essentials'
-      WHEN 'Health' THEN 'Daily essentials'
-      WHEN 'Home' THEN 'Daily essentials'
-      WHEN 'Personal' THEN 'Daily essentials'
-      ELSE 'Daily essentials' END
-      WHERE category NOT IN ('Study', 'Productive', 'Entertainment', 'Daily essentials')`),
-    db.prepare(`UPDATE tasks SET points = CASE
-      WHEN category = 'Entertainment' THEN duration_minutes * -0.5
-      WHEN category IN ('Study', 'Productive') AND duration_minutes > 0 THEN 5 + duration_minutes * 2
-      WHEN category = 'Daily essentials' AND duration_minutes > 0 THEN 5 + duration_minutes
-      ELSE 5 END`),
-    db.prepare(`UPDATE profiles SET accent = CASE
-      WHEN id = (
-        SELECT first_profile.id FROM profiles AS first_profile
-        WHERE first_profile.couple_id = profiles.couple_id
-        ORDER BY first_profile.created_at, first_profile.id LIMIT 1
-      ) THEN 'sage' ELSE 'coral' END`),
-  ]);
-  const taskColumns = await db.prepare("PRAGMA table_info(tasks)").all<{ name: string }>();
-  const columnNames = new Set(taskColumns.results.map((column) => column.name));
-  const additions = [];
-  if (!columnNames.has("schedule_type")) additions.push(db.prepare("ALTER TABLE tasks ADD COLUMN schedule_type TEXT NOT NULL DEFAULT 'daily'"));
-  if (!columnNames.has("scheduled_date")) additions.push(db.prepare("ALTER TABLE tasks ADD COLUMN scheduled_date TEXT"));
-  if (!columnNames.has("scheduled_weekday")) additions.push(db.prepare("ALTER TABLE tasks ADD COLUMN scheduled_weekday INTEGER"));
-  if (!columnNames.has("scheduled_time")) additions.push(db.prepare("ALTER TABLE tasks ADD COLUMN scheduled_time TEXT"));
-  if (!columnNames.has("animation_key")) additions.push(db.prepare("ALTER TABLE tasks ADD COLUMN animation_key TEXT NOT NULL DEFAULT 'auto'"));
-  if (additions.length) await db.batch(additions);
-  return db;
 }
 
 function parseCookies(request: Request) {
@@ -194,7 +45,7 @@ function parseCookies(request: Request) {
 export async function getSessionUser(request: Request): Promise<SessionUser | null> {
   const token = parseCookies(request).get(SESSION_COOKIE);
   if (!token) return null;
-  const db = await ensureDatabase();
+  const db = getDatabase();
   const user = await db
     .prepare(`SELECT p.id, p.couple_id, p.name, p.avatar, p.accent, s.token
       FROM sessions s JOIN profiles p ON p.id = s.profile_id
@@ -277,7 +128,7 @@ type TaskProgressRow = {
 
 /** Closes one running segment and folds it into the task's cumulative daily progress. */
 export async function closeActivitySession(
-  db: Awaited<ReturnType<typeof ensureDatabase>>,
+  db: ReturnType<typeof getDatabase>,
   activityId: string,
   profileId: string,
   finishedAt = new Date().toISOString(),

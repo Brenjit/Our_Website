@@ -1,5 +1,5 @@
 import {
-  ensureDatabase,
+  getDatabase,
   getSessionUser,
   hashPin,
   jsonError,
@@ -21,7 +21,7 @@ export async function PATCH(request: Request) {
     const body = (await request.json()) as Record<string, unknown>;
     const profileId = requireText(body.profileId, "Profile");
     const newPin = requirePin(body.newPin);
-    const db = await ensureDatabase();
+    const db = getDatabase();
 
     const initializer = await db
       .prepare("SELECT id FROM profiles WHERE couple_id = ? ORDER BY created_at, id LIMIT 1")

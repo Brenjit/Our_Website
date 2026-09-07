@@ -45,6 +45,32 @@ type ActiveTimerRow = {
   has_open_pause: number;
 };
 
+type NotificationScanRow = {
+  kind: "subscription" | "task" | "timer" | "queued";
+  id: string;
+  profile_id: string | null;
+  endpoint: string | null;
+  p256dh: string | null;
+  auth: string | null;
+  timezone: string | null;
+  owner_id: string | null;
+  title: string | null;
+  category: string | null;
+  duration_minutes: number | null;
+  schedule_type: string | null;
+  scheduled_date: string | null;
+  scheduled_weekday: number | null;
+  scheduled_time: string | null;
+  task_id: string | null;
+  task_title: string | null;
+  date_key: string | null;
+  started_at: string | null;
+  progress_seconds: number | null;
+  paused_seconds: number | null;
+  has_open_pause: number | null;
+  event_key: string | null;
+};
+
 export class PushDeliveryError extends Error {
   constructor(
     message: string,
@@ -210,14 +236,8 @@ export async function sendDueNotifications(env: Env, scheduledTime: number) {
   }
 
   const now = new Date(scheduledTime);
-  const [subscriptionResult, plannedTaskResult, timerResult, queuedTestResult] = await Promise.all([
-    env.DB.prepare(`SELECT id, profile_id, endpoint, p256dh, auth, timezone
-      FROM push_subscriptions`).all<StoredPushSubscription>(),
-    env.DB.prepare(`SELECT id, owner_id, title, category, duration_minutes,
-        schedule_type, scheduled_date, scheduled_weekday, scheduled_time
-      FROM tasks
-      WHERE is_archived = 0 AND scheduled_time IS NOT NULL`).all<PlannedTaskRow>(),
-    env.DB.prepare(`SELECT a.id, a.profile_id, a.task_id, a.date_key, a.started_at,
+  const scanResult = await env.DB.prepare(`WITH timer_rows AS (
+      SELECT a.id, a.profile_id, a.task_id, a.date_key, a.started_at,
         t.title AS task_title, t.duration_minutes,
         COALESCE(tp.elapsed_seconds, 0) AS progress_seconds,
         COALESCE(SUM(CASE WHEN ap.ended_at IS NOT NULL
@@ -228,31 +248,58 @@ export async function sendDueNotifications(env: Env, scheduledTime: number) {
       LEFT JOIN task_progress tp ON tp.task_id = a.task_id AND tp.date_key = a.date_key
       LEFT JOIN activity_pauses ap ON ap.activity_id = a.id
       WHERE a.status = 'active' AND t.duration_minutes > 0
-      GROUP BY a.id`).all<ActiveTimerRow>(),
-    env.DB.prepare(`SELECT s.id, s.profile_id, s.endpoint, s.p256dh, s.auth, s.timezone,
-        d.event_key
-      FROM notification_deliveries d
-      JOIN push_subscriptions s ON s.id = d.subscription_id
-      WHERE d.status = 'queued' AND d.attempted_at <= ?
-      ORDER BY d.attempted_at
-      LIMIT 20`)
-      .bind(now.toISOString())
-      .all<QueuedNotificationRow>(),
-  ]);
+      GROUP BY a.id
+    ),
+    queued_rows AS (
+      SELECT s.id, s.profile_id, s.endpoint, s.p256dh, s.auth, s.timezone, d.event_key
+        FROM notification_deliveries d
+        JOIN push_subscriptions s ON s.id = d.subscription_id
+        WHERE d.status = 'queued' AND d.attempted_at <= ?
+        ORDER BY d.attempted_at
+        LIMIT 20
+    )
+    SELECT 'subscription' AS kind, id, profile_id, endpoint, p256dh, auth, timezone,
+      NULL AS owner_id, NULL AS title, NULL AS category, NULL AS duration_minutes,
+      NULL AS schedule_type, NULL AS scheduled_date, NULL AS scheduled_weekday, NULL AS scheduled_time,
+      NULL AS task_id, NULL AS task_title, NULL AS date_key, NULL AS started_at,
+      NULL AS progress_seconds, NULL AS paused_seconds, NULL AS has_open_pause, NULL AS event_key
+      FROM push_subscriptions
+    UNION ALL
+    SELECT 'task', id, NULL, NULL, NULL, NULL, NULL,
+      owner_id, title, category, duration_minutes, schedule_type, scheduled_date, scheduled_weekday, scheduled_time,
+      NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+      FROM tasks WHERE is_archived = 0 AND scheduled_time IS NOT NULL
+    UNION ALL
+    SELECT 'timer', id, profile_id, NULL, NULL, NULL, NULL,
+      NULL, NULL, NULL, duration_minutes, NULL, NULL, NULL, NULL,
+      task_id, task_title, date_key, started_at, progress_seconds, paused_seconds, has_open_pause, NULL
+      FROM timer_rows
+    UNION ALL
+    SELECT 'queued', id, profile_id, endpoint, p256dh, auth, timezone,
+      NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+      NULL, NULL, NULL, NULL, NULL, NULL, NULL, event_key
+      FROM queued_rows`)
+    .bind(now.toISOString())
+    .all<NotificationScanRow>();
+
+  const subscriptions = scanResult.results.filter((row) => row.kind === "subscription") as unknown as StoredPushSubscription[];
+  const plannedTasks = scanResult.results.filter((row) => row.kind === "task") as unknown as PlannedTaskRow[];
+  const timers = scanResult.results.filter((row) => row.kind === "timer") as unknown as ActiveTimerRow[];
+  const queuedTests = scanResult.results.filter((row) => row.kind === "queued") as unknown as QueuedNotificationRow[];
 
   const tasksByProfile = new Map<string, PlannedTaskRow[]>();
-  for (const task of plannedTaskResult.results) {
+  for (const task of plannedTasks) {
     const tasks = tasksByProfile.get(task.owner_id) ?? [];
     tasks.push(task);
     tasksByProfile.set(task.owner_id, tasks);
   }
 
-  const timersByProfile = new Map(timerResult.results.map((timer) => [timer.profile_id, timer]));
+  const timersByProfile = new Map(timers.map((timer) => [timer.profile_id, timer]));
   let delivered = 0;
-  for (const job of queuedTestResult.results) {
+  for (const job of queuedTests) {
     if (await deliverQueuedTest(env, job, now)) delivered += 1;
   }
-  for (const subscription of subscriptionResult.results) {
+  for (const subscription of subscriptions) {
     let clock: ReturnType<typeof localClock>;
     try {
       clock = localClock(now, subscription.timezone);
@@ -293,13 +340,17 @@ export async function sendDueNotifications(env: Env, scheduledTime: number) {
     if (sent) delivered += 1;
   }
 
-  const cleanupBefore = new Date(now.getTime() - 30 * 86400_000).toISOString();
-  await env.DB.prepare("DELETE FROM notification_deliveries WHERE attempted_at < ?")
-    .bind(cleanupBefore)
-    .run();
+  // Retention cleanup is daily; running the same DELETE every minute only adds
+  // query traffic when there is normally nothing to remove.
+  if (now.getUTCHours() === 0 && now.getUTCMinutes() === 0) {
+    const cleanupBefore = new Date(now.getTime() - 30 * 86400_000).toISOString();
+    await env.DB.prepare("DELETE FROM notification_deliveries WHERE attempted_at < ?")
+      .bind(cleanupBefore)
+      .run();
+  }
   console.log(JSON.stringify({
     message: "Scheduled notification check completed",
-    subscriptions: subscriptionResult.results.length,
+    subscriptions: subscriptions.length,
     delivered,
     scheduledAt: now.toISOString(),
   }));

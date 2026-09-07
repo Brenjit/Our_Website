@@ -1,6 +1,6 @@
 import {
   createSessionCookie,
-  ensureDatabase,
+  getDatabase,
   hashPin,
   jsonError,
   requireText,
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
       throw new Error("Each PIN must be 4–8 digits");
     }
 
-    const db = await ensureDatabase();
+    const db = getDatabase();
     const existing = await db.prepare("SELECT id FROM couples LIMIT 1").first();
     if (existing) return Response.json({ error: "This space is already set up" }, { status: 409 });
 

@@ -977,12 +977,14 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     }
   }, [load]);
 
+  const dashboardSyncIntervalMs = data?.profiles.some((profile) => profile.busy) ? 30_000 : 120_000;
+
   useEffect(() => { const first = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(first); }, [load]);
   useEffect(() => {
     const syncWhenActive = () => {
       if (document.visibilityState === "visible") void load({ silent: true });
     };
-    const timer = window.setInterval(syncWhenActive, 30000);
+    const timer = window.setInterval(syncWhenActive, dashboardSyncIntervalMs);
     window.addEventListener("focus", syncWhenActive);
     window.addEventListener("online", syncWhenActive);
     document.addEventListener("visibilitychange", syncWhenActive);
@@ -992,7 +994,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       window.removeEventListener("online", syncWhenActive);
       document.removeEventListener("visibilitychange", syncWhenActive);
     };
-  }, [load]);
+  }, [dashboardSyncIntervalMs, load]);
   useEffect(() => {
     const first = window.setTimeout(() => void syncNotificationStatus(), 0);
     return () => window.clearTimeout(first);

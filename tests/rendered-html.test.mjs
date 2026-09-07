@@ -99,8 +99,9 @@ test("scheduled handler sends both planned-task and finished-timer pushes", asyn
         values: [],
         bind(...values) { this.values = values; return this; },
         async all() {
-          if (sql.includes("FROM push_subscriptions")) return { results: [subscription] };
-          if (sql.includes("FROM tasks")) return { results: [{
+          if (sql.includes("WITH timer_rows")) return { results: [
+            { kind: "subscription", ...subscription },
+            { kind: "task",
             id: "planned-task",
             owner_id: "profile-1",
             title: "Read together",
@@ -110,8 +111,8 @@ test("scheduled handler sends both planned-task and finished-timer pushes", asyn
             scheduled_date: "2026-09-05",
             scheduled_weekday: null,
             scheduled_time: "12:00",
-          }] };
-          if (sql.includes("FROM activity_sessions")) return { results: [{
+            },
+            { kind: "timer",
             id: "timer-session",
             profile_id: "profile-1",
             task_id: "active-task",
@@ -122,7 +123,8 @@ test("scheduled handler sends both planned-task and finished-timer pushes", asyn
             progress_seconds: 0,
             paused_seconds: 0,
             has_open_pause: 0,
-          }] };
+            },
+          ] };
           return { results: [] };
         },
         async first() { return null; },
@@ -183,7 +185,7 @@ test("scheduled handler delivers a queued closed-app notification test", async (
         values: [],
         bind(...values) { this.values = values; return this; },
         async all() {
-          if (sql.includes("JOIN push_subscriptions")) return { results: [job] };
+          if (sql.includes("WITH timer_rows")) return { results: [{ kind: "queued", ...job }] };
           return { results: [] };
         },
         async run() {
