@@ -915,12 +915,14 @@
 /* Goals */
 .premium-goal-bars { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; width: 100%; }
 .premium-goal-bar-row { display: flex; flex-direction: column; gap: 4px; }
+.premium-goal-bars .premium-goal-bar-row { width: 100%; padding: 7px 9px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background .2s ease, border-color .2s ease; }
+.premium-goal-bars .premium-goal-bar-row:hover { background: rgba(22, 132, 91, .06); }
+.premium-goal-bars .premium-goal-bar-row:focus-visible { outline: 2px solid var(--p-green); outline-offset: 2px; }
+.premium-goal-bars .premium-goal-bar-row.is-selected { background: var(--p-green-soft); border-color: rgba(22, 132, 91, .24); }
 .premium-goal-bar-row > div { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 500; color: var(--p-ink-soft); }
 .premium-goal-bar-row > div b { color: var(--p-ink); font-weight: 600; }
 .premium-goal-bar-track { height: 6px; border-radius: 4px; background: rgba(22, 132, 91, .12); overflow: hidden; position: relative; }
 .premium-goal-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--p-green); border-radius: 4px; transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1); min-width: 4px; }
-.premium-goal-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: var(--p-green-soft); color: var(--p-green-strong); letter-spacing: 0.02em; }
-.premium-goal-badge svg { width: 10px; height: 10px; }
 .premium-goal-chip { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border: 1px solid var(--p-line); border-radius: 12px; background: #fff; cursor: pointer; transition: all 0.2s; font-size: 13px; font-weight: 500; color: var(--p-ink-soft); }
 .premium-goal-chip:hover { border-color: rgba(22, 132, 91, .4); background: var(--p-green-soft); }
 .premium-goal-chip.selected { border-color: var(--p-green); background: var(--p-green); color: #fff; }
@@ -990,9 +992,19 @@
   .premium-top-actions > .premium-new-task { min-width: auto; }
   .tab-home .premium-day-panel { display: none; }
   .tab-home .premium-workspace { display: block; }
-  .premium-task-board { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: calc(100% / 3); }
+  .premium-task-board { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: min(440px, 78vw); gap: 10px; padding: 8px; scroll-snap-type: x mandatory; }
+  .premium-task-column { border: 1px solid var(--p-line); border-radius: 14px; background: rgba(255, 255, 255, .66); }
+  .premium-task-column:last-child { border-right: 1px solid var(--p-line); }
   .tab-progress .premium-workspace { grid-template-columns: 1fr; }
   .tab-progress .premium-race-card { min-height: 190px; }
+}
+
+@media (max-width: 760px) {
+  .premium-topbar { gap: 8px; }
+  .premium-top-actions { gap: 6px; }
+  .premium-top-actions > .premium-refresh:not(.premium-goals-button) { display: none; }
+  .premium-top-actions > .premium-new-task { min-width: 42px; padding-inline: 11px; font-size: 0; }
+  .premium-top-actions > .premium-new-task svg { width: 17px; height: 17px; }
 }
 
 @media (max-width: 620px) {
@@ -1026,33 +1038,32 @@
   .premium-session-meta { justify-content: center; }
   .premium-day-panel { padding: 17px; border-radius: 20px; }
   .tab-tasks .premium-day-panel { margin: 0; padding: 0; }
-  .tab-tasks .premium-task-board { width: calc(100% + 26px); margin-inline: -13px; border-right: 0; border-left: 0; border-radius: 0; }
-  .premium-task-board { grid-auto-columns: calc(100% / 3); gap: 0; }
-  .premium-task-column { height: min(560px, calc(100svh - 238px)); min-height: 390px; padding: 0; border-radius: 0; gap: 0; }
-  .premium-task-column > header { min-height: 51px; padding: 5px 5px; grid-template-columns: minmax(0, 1fr) 27px; align-content: center; gap: 3px; }
-  .premium-task-column > header > span,
-  .premium-task-column > header > b { display: none; }
-  .premium-task-column > header > div { text-align: left; gap: 1px; }
-  .premium-task-column > header h3 { overflow: visible; font-size: 10px; line-height: 1.15; text-overflow: clip; white-space: normal; }
-  .premium-task-column > header small { font-size: 8px; }
-  .premium-column-add-icon { width: 27px; height: 27px; border-radius: 8px; }
-  .premium-task-column-scroll { padding: 4px; gap: 5px; scrollbar-gutter: auto; }
+  .tab-tasks .premium-task-board { width: 100%; margin-inline: 0; border: 1px solid var(--p-line); border-radius: 16px; }
+  .premium-task-board { grid-auto-columns: calc(100% - 24px); gap: 9px; padding: 7px; }
+  .premium-task-column { height: min(580px, calc(100svh - 245px)); min-height: 420px; padding: 0; border-radius: 13px; gap: 0; }
+  .premium-task-column > header { min-height: 56px; padding: 7px 9px; grid-template-columns: 32px minmax(0, 1fr) 30px; align-content: center; gap: 7px; }
+  .premium-task-column > header > span { display: grid; }
+  .premium-task-column > header > div { text-align: left; gap: 2px; }
+  .premium-task-column > header h3 { overflow: hidden; font-size: 13px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+  .premium-task-column > header small { font-size: 9px; }
+  .premium-column-add-icon { width: 30px; height: 30px; border-radius: 9px; }
+  .premium-task-column-scroll { padding: 8px; gap: 8px; scrollbar-gutter: auto; }
   .premium-task-column .premium-task,
   .premium-task-column .premium-task.is-active,
-  .premium-task-column .premium-task.schedule-now:not(.is-active) { min-height: 0; padding: 8px 5px 6px; grid-template-columns: 25px minmax(0, 1fr); gap: 3px 4px; border-radius: 9px; }
-  .premium-task-column .premium-task-action { width: 24px; height: 24px; border-radius: 7px; }
-  .premium-task-column .premium-task-title-row { align-items: flex-start; gap: 0; }
-  .premium-task-column .premium-task-title-row > strong { font-size: 10px; line-height: 1.2; -webkit-line-clamp: 3; }
-  .premium-task-column .premium-task-title-row > button { width: 20px; height: 20px; margin: -4px -4px 0 0; }
-  .premium-task-column .premium-task-compact-meta { min-height: 0; font-size: 8px; line-height: 1.1; gap: 2px; }
+  .premium-task-column .premium-task.schedule-now:not(.is-active) { min-height: 92px; padding: 11px 10px 9px; grid-template-columns: 32px minmax(0, 1fr); gap: 6px 8px; border-radius: 13px; }
+  .premium-task-column .premium-task-action { width: 30px; height: 30px; border-radius: 9px; }
+  .premium-task-column .premium-task-title-row { align-items: center; gap: 4px; }
+  .premium-task-column .premium-task-title-row > strong { font-size: 13px; line-height: 1.3; -webkit-line-clamp: 2; }
+  .premium-task-column .premium-task-title-row > button { width: 26px; height: 26px; margin: -5px -5px 0 auto; }
+  .premium-task-column .premium-task-compact-meta { min-height: 0; font-size: 10px; line-height: 1.2; gap: 4px; }
   .premium-task-column .premium-start-label,
-  .premium-task-column .premium-undo-label { min-height: 25px; margin-top: 0; padding: 0 3px; font-size: 8px; gap: 2px; }
-  .premium-task-column .premium-done-time { text-align: center; font-size: 9px; }
-  .premium-task-column .premium-task-live { min-width: 0; align-items: center; justify-content: space-between; gap: 2px; }
-  .premium-task-column .premium-task-live > strong { font-size: 9px; }
-  .premium-task-column .premium-task-live button { min-height: 27px; padding: 0 4px; font-size: 8px; }
-  .premium-column-empty { min-height: 120px; padding: 8px 4px; border-radius: 10px; }
-  .premium-column-empty span { font-size: 9px; }
+  .premium-task-column .premium-undo-label { min-height: 31px; margin-top: 0; padding: 0 8px; font-size: 10px; gap: 4px; }
+  .premium-task-column .premium-done-time { text-align: center; font-size: 10px; }
+  .premium-task-column .premium-task-live { min-width: 0; align-items: center; justify-content: space-between; gap: 5px; }
+  .premium-task-column .premium-task-live > strong { font-size: 10px; }
+  .premium-task-column .premium-task-live button { min-height: 30px; padding: 0 8px; font-size: 10px; }
+  .premium-column-empty { min-height: 150px; padding: 14px; border-radius: 12px; }
+  .premium-column-empty span { font-size: 11px; }
   .premium-column-add { min-height: 34px; padding: 0 3px; border-radius: 9px; font-size: 9px; gap: 2px; }
   .premium-task { min-height: 92px; grid-template-columns: 22px 40px minmax(0, 1fr) auto; gap: 7px; }
   .premium-drag-handle { width: 22px; }

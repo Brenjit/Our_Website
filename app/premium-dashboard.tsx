@@ -547,7 +547,6 @@ function QueueTask({ task, busy, updating, now, dragging, isFirst, isLast, compa
   onEdit: (task: Task) => void;
   onDragStart: (taskId: string, event: ReactPointerEvent<HTMLButtonElement>) => void;
   onMove: (taskId: string, direction: -1 | 1) => void;
-  goals?: Goal[];
 }) {
   const active = Boolean(task.activeSession);
   const timed = task.durationMinutes > 0;
@@ -578,9 +577,6 @@ function QueueTask({ task, busy, updating, now, dragging, isFirst, isLast, compa
     <div className="premium-task-copy">
       <div className="premium-task-title-row">
         <strong>{task.title}</strong>
-        {task.goalId && goals?.find(g => g.id === task.goalId) && (
-          <span className="premium-goal-badge"><Target /> {goals.find(g => g.id === task.goalId)?.title}</span>
-        )}
         <button type="button" onClick={() => onEdit(task)} disabled={active} aria-label={`Edit ${task.title}`}><Pencil size={11} /></button>
       </div>
       {compact ? <span className="premium-task-compact-meta">{timed && <><span><Clock3 size={10} /> {task.durationMinutes} min</span><i aria-hidden="true">·</i></>}<span>{schedule.label}</span></span> : <>
@@ -629,6 +625,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   const [editAnimation, setEditAnimation] = useState<TaskAnimation>("auto");
   const [draftGoalId, setDraftGoalId] = useState<string | null>(null);
   const [editGoalId, setEditGoalId] = useState<string | null>(null);
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [goalsOpen, setGoalsOpen] = useState(false);
   const [goalsWithHeatmap, setGoalsWithHeatmap] = useState<GoalWithHeatmap[]>([]);
   const [goalsHeatmapLoading, setGoalsHeatmapLoading] = useState(false);
@@ -1495,6 +1492,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       setGoalsWithHeatmap((prev) => prev.filter((g) => g.id !== goalId));
       if (draftGoalId === goalId) setDraftGoalId(null);
       if (editGoalId === goalId) setEditGoalId(null);
+      setSelectedGoalId((current) => current === goalId ? null : current);
       await load();
     } catch (err) {
       setGoalMessage(err instanceof Error ? err.message : "Couldn't delete that goal");
@@ -1652,6 +1650,8 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   const editWillReopen = Boolean(editTask?.completedAt && Number(editDuration) * 60 > Number(editTask.progressSeconds));
   const taskOrderIndex = new Map((taskOrder ?? serverTaskIds).map((id, index) => [id, index]));
   const plannerTasks = [...me.tasks].sort((a, b) => (taskOrderIndex.get(a.id) ?? a.sortOrder) - (taskOrderIndex.get(b.id) ?? b.sortOrder));
+  const selectedGoal = goals.find((goal) => goal.id === selectedGoalId) ?? null;
+  const visiblePlannerTasks = selectedGoal ? plannerTasks.filter((task) => task.goalId === selectedGoal.id) : plannerTasks;
 
   return <div className={`premium-app tab-${activeTab}`}>
     <aside className="premium-rail">
@@ -1673,7 +1673,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
         </div>
         <div className="premium-top-actions">
           <span className="premium-score-pill"><Flame size={15} fill="currentColor" /> {formatPoints(me.score)} pts</span>
-          <button type="button" className="premium-refresh" onClick={() => void openGoals()} aria-label="Manage goals"><Target size={15} /><span>Goals</span></button>
+          <button type="button" className="premium-refresh premium-goals-button" onClick={() => void openGoals()} aria-label="Manage goals"><Target size={15} /><span>Goals</span></button>
           <button type="button" className={`premium-refresh ${refreshing ? "is-refreshing" : ""}`} onClick={() => void refreshDashboard()} disabled={refreshing} aria-label={refreshing ? "Refreshing dashboard" : "Refresh dashboard"} title="Refresh dashboard"><RefreshCw size={15} /><span>{refreshing ? "Refreshing" : "Refresh"}</span></button>
           <button type="button" className={`premium-notification-button is-${notificationState}`} onClick={() => setSettingsOpen(true)} aria-label={`Notifications: ${notificationState}`} title="Notification settings">{notificationState === "enabled" ? <BellRing size={16} /> : notificationState === "blocked" ? <BellOff size={16} /> : <Bell size={16} />}<span>Alerts</span><i /></button>
           <button type="button" className="premium-new-task" onClick={() => setAddOpen(true)}><Plus size={16} /> New task</button>
@@ -1771,22 +1771,23 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
             {partnerTask && <b>{partnerTimer?.label}</b>}
           </div>
 
-          <div className="premium-planner-hint"><span>{activeTab === "tasks" ? <><BarChart3 size={12} /> Tasks by category</> : <><GripVertical size={12} /> Drag to reorder</>}</span><span>{activeTab === "tasks" ? <><ChevronRight size={11} /> Scroll each category</> : <><CalendarClock size={12} /> Tap timing to schedule</>}</span></div>
+          <div className="premium-planner-hint"><span>{activeTab === "tasks" ? <><BarChart3 size={12} /> Tasks by category</> : <><GripVertical size={12} /> Drag to reorder</>}</span><span>{activeTab === "tasks" ? <><ChevronRight size={11} /> Swipe to browse</> : <><CalendarClock size={12} /> Tap timing to schedule</>}</span></div>
 
           {goals.length > 0 && <div className="premium-goal-bars" aria-label="Today's goal progress">
             {goals.map((goal) => {
               const minutes = goalLiveMinutes(goal);
               const percent = Math.min(100, Math.round(minutes / goal.targetMinutes * 100));
-              return <div className="premium-goal-bar-row" key={goal.id}>
+              const selected = selectedGoal?.id === goal.id;
+              return <button type="button" className={`premium-goal-bar-row ${selected ? "is-selected" : ""}`} key={goal.id} aria-pressed={selected} aria-label={`${selected ? "Show all tasks" : `Show only tasks linked to ${goal.title}`}`} onClick={() => setSelectedGoalId((current) => current === goal.id ? null : goal.id)}>
                 <div><span><Target size={10} /> {goal.title}</span><b>{minutes} / {goal.targetMinutes}m</b></div>
                 <div className="premium-goal-bar-track"><div className="premium-goal-bar-fill" style={{ width: `${percent}%` }} /></div>
-              </div>;
+              </button>;
             })}
           </div>}
 
           {activeTab === "tasks" ? <div className="premium-task-board" aria-label="Tasks grouped by category">
             {TASK_CATEGORIES.map((category) => {
-              const categoryTasks = plannerTasks.filter((task) => task.category === category || (category === "Productive" && task.category === "Study"));
+              const categoryTasks = visiblePlannerTasks.filter((task) => task.category === category || (category === "Productive" && task.category === "Study"));
               const completedCount = categoryTasks.filter((task) => task.completedAt).length;
               return <section className={`premium-task-column column-${categorySlug(category)}`} key={category} aria-labelledby={`task-column-${categorySlug(category)}`}>
                 <header>
@@ -1795,13 +1796,13 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
                   <button type="button" className="premium-column-add-icon" onClick={() => { setDraftCategory(category); setAddOpen(true); }} aria-label={`Add ${category.toLowerCase()} task`}><Plus size={15} /></button>
                 </header>
                 <div className="premium-task-column-scroll">
-                  {categoryTasks.length ? categoryTasks.map((task, index) => <QueueTask key={task.id} task={task} goals={goals} busy={Boolean(me.busy)} updating={Boolean(busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === categoryTasks.length - 1} compact onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-column-empty"><Sparkles size={17} /><span>No {category.toLowerCase()} tasks yet</span></div>}
+                  {categoryTasks.length ? categoryTasks.map((task, index) => <QueueTask key={task.id} task={task} busy={Boolean(me.busy)} updating={Boolean(busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === categoryTasks.length - 1} compact onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-column-empty"><Sparkles size={17} /><span>{selectedGoal ? `No ${category.toLowerCase()} tasks in this goal` : `No ${category.toLowerCase()} tasks yet`}</span></div>}
                 </div>
               </section>;
             })}
           </div> : <>
             <div className="premium-task-list">
-              {plannerTasks.length ? plannerTasks.map((task, index) => <QueueTask key={task.id} task={task} goals={goals} busy={Boolean(me.busy)} updating={Boolean(busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === plannerTasks.length - 1} compact={false} onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-empty"><Sparkles size={22} /><strong>Your day is open</strong><p>Add a task and make the first move.</p></div>}
+              {visiblePlannerTasks.length ? visiblePlannerTasks.map((task, index) => <QueueTask key={task.id} task={task} busy={Boolean(me.busy)} updating={Boolean(busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === visiblePlannerTasks.length - 1} compact={false} onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-empty"><Sparkles size={22} /><strong>{selectedGoal ? `No tasks in ${selectedGoal.title}` : "Your day is open"}</strong><p>{selectedGoal ? "Link a task to this goal, or tap the goal bar again to show everything." : "Add a task and make the first move."}</p></div>}
             </div>
             <button type="button" className="premium-add-row" onClick={() => setAddOpen(true)}><Plus size={15} /> Add to today</button>
           </>}
