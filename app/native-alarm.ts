@@ -13,6 +13,13 @@ export type NativeAlarmStatus = {
   exact?: boolean;
 };
 
+export type NativeAlarmAction = {
+  actionId: string;
+  activityId: string;
+  action: "stop" | "snooze";
+  createdAt: number;
+};
+
 type NativeAlarmPlugin = {
   getStatus(): Promise<NativeAlarmStatus>;
   requestAlarmPermissions(): Promise<NativeAlarmStatus>;
@@ -22,6 +29,8 @@ type NativeAlarmPlugin = {
   cancel(options: { id: string }): Promise<void>;
   cancelAll(): Promise<void>;
   testAlarm(): Promise<NativeAlarmStatus>;
+  getPendingAction(): Promise<Partial<NativeAlarmAction>>;
+  clearPendingAction(options: { actionId: string }): Promise<void>;
 };
 
 const TwogetherAlarm = registerPlugin<NativeAlarmPlugin>("TwogetherAlarm");
@@ -39,4 +48,6 @@ export const nativeAlarm = {
   cancel: (id: string) => TwogetherAlarm.cancel({ id }),
   cancelAll: () => TwogetherAlarm.cancelAll(),
   test: () => TwogetherAlarm.testAlarm(),
+  pendingAction: () => TwogetherAlarm.getPendingAction(),
+  clearPendingAction: (actionId: string) => TwogetherAlarm.clearPendingAction({ actionId }),
 };

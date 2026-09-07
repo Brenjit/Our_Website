@@ -115,6 +115,7 @@ type ActiveSessionRow = {
   profile_id: string;
   date_key: string;
   started_at: string;
+  extension_seconds: number;
   category: TaskCategory;
   duration_minutes: number;
 };
@@ -134,6 +135,7 @@ export async function closeActivitySession(
   finishedAt = new Date().toISOString(),
 ) {
   const activity = await db.prepare(`SELECT a.id, a.task_id, a.profile_id, a.date_key, a.started_at,
+      a.extension_seconds,
       t.category, t.duration_minutes
     FROM activity_sessions a JOIN tasks t ON t.id = a.task_id
     WHERE a.id = ? AND a.profile_id = ? AND a.status = 'active'`)
@@ -162,7 +164,7 @@ export async function closeActivitySession(
   const segmentPoints = activeSeconds / 60 * categoryPointRate(activity.category) +
     pauses.reduce((sum, pause) => sum + pause.seconds / 60 * categoryPointRate(pause.category), 0);
   const elapsedSeconds = Math.max(0, Number(progress?.elapsed_seconds ?? 0) + activeSeconds);
-  const targetSeconds = activity.duration_minutes * 60;
+  const targetSeconds = activity.duration_minutes * 60 + Math.max(0, Number(activity.extension_seconds) || 0);
   const completed = targetSeconds > 0 && elapsedSeconds >= targetSeconds;
   const awardBonus = completed && !progress?.completion_bonus_awarded && activity.category !== "Entertainment";
   const pointsEarned = Math.round((Number(progress?.points_earned ?? 0) + segmentPoints + (awardBonus ? 5 : 0)) * 10) / 10;

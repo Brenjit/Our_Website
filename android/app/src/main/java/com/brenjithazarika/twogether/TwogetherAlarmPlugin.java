@@ -116,6 +116,26 @@ public class TwogetherAlarmPlugin extends Plugin {
         call.resolve(result);
     }
 
+    @PluginMethod
+    public void getPendingAction(PluginCall call) {
+        AlarmActionStore.PendingAction pending = AlarmActionStore.read(getContext());
+        JSObject result = new JSObject();
+        if (pending != null) {
+            result.put("actionId", pending.actionId);
+            result.put("activityId", pending.activityId);
+            result.put("action", pending.action);
+            result.put("createdAt", pending.createdAt);
+        }
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void clearPendingAction(PluginCall call) {
+        String actionId = call.getString("actionId");
+        if (actionId != null) AlarmActionStore.clear(getContext(), actionId);
+        call.resolve();
+    }
+
     private void openRequiredSettings(PluginCall call) {
         boolean opened = false;
         if (!AlarmScheduler.canScheduleExact(getContext())) {

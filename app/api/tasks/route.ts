@@ -26,7 +26,15 @@ export async function POST(request: Request) {
     const scheduledWeekday = new Date(`${scheduledDate}T12:00:00Z`).getUTCDay();
     const scheduledTime = validScheduledTime(body.scheduledTime);
     const animationKey = requireTaskAnimation(body.animationKey, title, category, user.name);
+    const goalId = typeof body.goalId === "string" && body.goalId ? body.goalId : null;
     const db = getDatabase();
+    // Validate goal ownership if provided
+    if (goalId) {
+      const goal = await db.prepare("SELECT id FROM goals WHERE id = ? AND profile_id = ?")
+        .bind(goalId, user.id)
+        .first<{ id: string }>();
+      if (!goal) throw new Error("Goal not found");
+    }
     const order = await db
       .prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM tasks WHERE owner_id = ?")
       .bind(user.id)
@@ -43,13 +51,14 @@ export async function POST(request: Request) {
       scheduledWeekday: scheduleType === "weekly" ? scheduledWeekday : null,
       scheduledTime,
       animationKey,
+      goalId,
       sortOrder: Number(order?.next_order ?? 0),
       createdAt: new Date().toISOString(),
     };
     await db.prepare(`INSERT INTO tasks
-      (id, owner_id, title, category, duration_minutes, points, schedule_type, scheduled_date, scheduled_weekday, scheduled_time, animation_key, sort_order, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`) 
-      .bind(task.id, task.ownerId, task.title, task.category, task.durationMinutes, task.points, task.scheduleType, task.scheduledDate, task.scheduledWeekday, task.scheduledTime, task.animationKey, task.sortOrder, task.createdAt)
+      (id, owner_id, title, category, duration_minutes, points, schedule_type, scheduled_date, scheduled_weekday, scheduled_time, animation_key, goal_id, sort_order, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(task.id, task.ownerId, task.title, task.category, task.durationMinutes, task.points, task.scheduleType, task.scheduledDate, task.scheduledWeekday, task.scheduledTime, task.animationKey, task.goalId, task.sortOrder, task.createdAt)
       .run();
     return Response.json({ task }, { status: 201 });
   } catch (error) {

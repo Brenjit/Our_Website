@@ -10,7 +10,7 @@ const starterTasks = [
   { title: "Morning reset", category: "Daily essentials", duration: 10, points: 15 },
   { title: "Drink 2L water", category: "Daily essentials", duration: 0, points: 5 },
   { title: "Focused work", category: "Productive", duration: 45, points: 95 },
-  { title: "Read and learn", category: "Study", duration: 30, points: 65 },
+  { title: "Read and learn", category: "Productive", duration: 30, points: 65 },
   { title: "Evening tidy-up", category: "Daily essentials", duration: 15, points: 20 },
 ];
 

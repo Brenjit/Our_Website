@@ -45,6 +45,18 @@ export const loginRateLimits = sqliteTable(
   ],
 );
 
+export const goals = sqliteTable(
+  "goals",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id").notNull(),
+    title: text("title").notNull(),
+    targetMinutes: integer("target_minutes").notNull().default(60),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_goals_profile").on(table.profileId)],
+);
+
 export const tasks = sqliteTable(
   "tasks",
   {
@@ -60,6 +72,7 @@ export const tasks = sqliteTable(
     scheduledTime: text("scheduled_time"),
     animationKey: text("animation_key").notNull().default("auto"),
     sortOrder: integer("sort_order").notNull().default(0),
+    goalId: text("goal_id"),
     isArchived: integer("is_archived", { mode: "boolean" })
       .notNull()
       .default(false),
@@ -95,6 +108,7 @@ export const activitySessions = sqliteTable(
     profileId: text("profile_id").notNull(),
     dateKey: text("date_key").notNull(),
     startedAt: text("started_at").notNull(),
+    extensionSeconds: integer("extension_seconds").notNull().default(0),
     finishedAt: text("finished_at"),
     status: text("status").notNull(),
   },
@@ -103,6 +117,18 @@ export const activitySessions = sqliteTable(
     index("idx_activity_task_status").on(table.taskId, table.status),
     index("idx_activity_profile_date_status").on(table.profileId, table.dateKey, table.status),
   ],
+);
+
+export const alarmActionReceipts = sqliteTable(
+  "alarm_action_receipts",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id").notNull(),
+    activityId: text("activity_id").notNull(),
+    action: text("action").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_alarm_action_profile").on(table.profileId, table.createdAt)],
 );
 
 export const activityPauses = sqliteTable(

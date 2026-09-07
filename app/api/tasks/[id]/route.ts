@@ -29,7 +29,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       ? calculateTaskPoints(category, durationMinutes)
       : calculateTaskPoints(category);
     const animationKey = requireTaskAnimation(body.animationKey, title, category, user.name);
+    const goalId = typeof body.goalId === "string" && body.goalId ? body.goalId : null;
     const db = getDatabase();
+    // Validate goal ownership if provided
+    if (goalId) {
+      const goal = await db.prepare("SELECT id FROM goals WHERE id = ? AND profile_id = ?")
+        .bind(goalId, user.id)
+        .first<{ id: string }>();
+      if (!goal) throw new Error("Goal not found");
+    }
     const task = await db.prepare(`SELECT t.id, t.category, t.duration_minutes,
         EXISTS(SELECT 1 FROM activity_sessions a WHERE a.task_id = t.id AND a.status = 'active') AS is_running
       FROM tasks t WHERE t.id = ? AND t.owner_id = ? AND t.is_archived = 0`)
@@ -56,7 +64,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const now = new Date().toISOString();
     const statements = [db.prepare(`UPDATE tasks SET
         title = ?, category = ?, duration_minutes = ?, points = ?, schedule_type = ?,
-        scheduled_date = ?, scheduled_weekday = ?, scheduled_time = ?, animation_key = ?
+        scheduled_date = ?, scheduled_weekday = ?, scheduled_time = ?, animation_key = ?, goal_id = ?
       WHERE id = ? AND owner_id = ?`)
       .bind(
         title,
@@ -68,6 +76,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         scheduleType === "weekly" ? scheduledWeekday : null,
         scheduledTime,
         animationKey,
+        goalId,
         id,
         user.id,
       )];

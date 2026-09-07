@@ -35,6 +35,7 @@ import {
   RotateCcw,
   Sparkles,
   Square,
+  Target,
   Timer,
   Trophy,
   Trash2,
@@ -42,15 +43,16 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { isNativeAndroidApp, nativeAlarm, type NativeAlarmStatus } from "./native-alarm";
+import { isNativeAndroidApp, nativeAlarm, type NativeAlarmAction, type NativeAlarmStatus } from "./native-alarm";
 
 type TaskCategory = "Study" | "Productive" | "Entertainment" | "Daily essentials";
 type TaskSchedule = "once" | "daily" | "weekdays" | "weekly";
 type TaskAnimation = "study" | "study-planning" | "cooking" | "eating" | "sleeping" | "meeting" | "coding" | "class-recording" | "auto";
 type NotificationState = "loading" | "unsupported" | "unavailable" | "prompt" | "dismissed" | "enabled" | "blocked";
-const TASK_CATEGORIES: TaskCategory[] = ["Study", "Productive", "Entertainment", "Daily essentials"];
+const TASK_CATEGORIES: TaskCategory[] = ["Daily essentials", "Productive", "Entertainment"];
 const DURATION_PRESETS = [5, 10, 15, 30, 45, 60] as const;
 const FINISH_ALARM_SRC = "/SFX/ES_Alert%20Tone%2C%20Ringtone%2002%20-%20Epidemic%20Sound.mp3";
+const NATIVE_ALARM_STORAGE_PREFIX = "twogether-native-alarm:";
 type TimerCue = "start" | "resume" | "warning" | "finish";
 
 const TIMER_CUE_PATTERNS: Record<TimerCue, Array<[delay: number, frequency: number, duration: number]>> = {
@@ -113,17 +115,30 @@ type Task = {
   scheduledTime: string | null;
   animationKey: TaskAnimation;
   sortOrder: number;
+  goalId: string | null;
   completedAt: string | null;
   progressSeconds: number;
   progressPoints: number;
   activeSession: {
     id: string;
     startedAt: string;
+    extensionSeconds: number;
     pausedSeconds: number;
     pausePoints: number;
     currentPause: { id: string; category: TaskCategory; startedAt: string } | null;
   } | null;
 };
+
+type Goal = {
+  id: string;
+  title: string;
+  targetMinutes: number;
+  todayMinutes: number;
+};
+
+type GoalHeatmapEntry = { date: string; minutes: number };
+
+type GoalWithHeatmap = Goal & { heatmap: GoalHeatmapEntry[] };
 
 type DashboardProfile = PublicProfile & {
   isCurrent: boolean;
@@ -148,6 +163,7 @@ type DashboardData = {
   user: PublicProfile;
   isInitializer: boolean;
   profiles: DashboardProfile[];
+  goals: Goal[];
   recentActivity: Array<{
     id: string;
     completed_at: string;
@@ -338,7 +354,7 @@ function countdownState(task: Task, now: number) {
       openPauseSeconds,
   ));
   const elapsedSeconds = Math.max(0, Number(task.progressSeconds) || 0) + sessionElapsedSeconds;
-  const remainingSeconds = Math.trunc(task.durationMinutes * 60 - elapsedSeconds);
+  const remainingSeconds = Math.trunc(task.durationMinutes * 60 + Math.max(0, Number(task.activeSession.extensionSeconds) || 0) - elapsedSeconds);
   const absolute = Math.abs(remainingSeconds);
   const hours = Math.floor(absolute / 3600);
   const minutes = Math.floor((absolute % 3600) / 60);
@@ -365,7 +381,7 @@ function countdownState(task: Task, now: number) {
 function taskProgressState(task: Task, now: number) {
   const timer = countdownState(task, now);
   const elapsedSeconds = timer ? timer.elapsedMinutes * 60 : Math.max(0, Number(task.progressSeconds) || 0);
-  const targetSeconds = Math.max(0, task.durationMinutes * 60);
+  const targetSeconds = Math.max(0, task.durationMinutes * 60 + (task.activeSession?.extensionSeconds ?? 0));
   const percent = targetSeconds ? Math.min(100, elapsedSeconds / targetSeconds * 100) : task.completedAt ? 100 : 0;
   const workedMinutes = Math.floor(elapsedSeconds / 60);
   const remainingMinutes = Math.max(0, Math.ceil((targetSeconds - elapsedSeconds) / 60));
@@ -531,13 +547,15 @@ function QueueTask({ task, busy, updating, now, dragging, isFirst, isLast, compa
   onEdit: (task: Task) => void;
   onDragStart: (taskId: string, event: ReactPointerEvent<HTMLButtonElement>) => void;
   onMove: (taskId: string, direction: -1 | 1) => void;
+  goals?: Goal[];
 }) {
   const active = Boolean(task.activeSession);
   const timed = task.durationMinutes > 0;
   const countdown = countdownState(task, now);
   const progress = taskProgressState(task, now);
   const schedule = scheduleState(task, now);
-  return <article data-task-id={task.id} className={`premium-task category-${categorySlug(task.category)} ${compact ? "is-compact" : ""} ${task.completedAt ? "is-done" : ""} ${active ? "is-active" : ""} ${dragging ? "is-dragging" : ""} schedule-${schedule.phase}`}>
+  const displayCategory: TaskCategory = task.category === "Study" ? "Productive" : task.category;
+  return <article data-task-id={task.id} className={`premium-task category-${categorySlug(displayCategory)} ${compact ? "is-compact" : ""} ${task.completedAt ? "is-done" : ""} ${active ? "is-active" : ""} ${dragging ? "is-dragging" : ""} schedule-${schedule.phase}`}>
     <button
       type="button"
       className="premium-drag-handle"
@@ -550,17 +568,23 @@ function QueueTask({ task, busy, updating, now, dragging, isFirst, isLast, compa
     ><GripVertical size={14} /></button>
     <button
       type="button"
-      className={`premium-task-action ${categorySlug(task.category)}`}
+      className={`premium-task-action ${categorySlug(displayCategory)}`}
       onClick={() => onAction(task, timed ? countdown?.paused ? "resume" : active ? "finish" : "start" : "toggle")}
       disabled={updating || Boolean(task.completedAt && timed) || (!timed && busy)}
       aria-label={task.completedAt ? timed ? `${task.title} completed` : `Mark ${task.title} incomplete` : active ? `Finish this ${task.title} session` : busy ? `Switch to ${task.title}` : `${task.progressSeconds ? "Resume" : "Start"} ${task.title}`}
     >
-      {task.completedAt ? <Check size={17} strokeWidth={3} /> : countdown?.paused ? <Play size={14} fill="currentColor" /> : active ? <Square size={11} fill="currentColor" /> : <CategoryIcon category={task.category} size={16} />}
+      {task.completedAt ? <Check size={17} strokeWidth={3} /> : countdown?.paused ? <Play size={14} fill="currentColor" /> : active ? <Square size={11} fill="currentColor" /> : <CategoryIcon category={displayCategory} size={16} />}
     </button>
     <div className="premium-task-copy">
-      <div className="premium-task-title-row"><strong>{task.title}</strong><button type="button" onClick={() => onEdit(task)} disabled={active} aria-label={`Edit ${task.title}`}><Pencil size={11} /></button></div>
-      {compact ? <span className="premium-task-compact-meta"><b>{task.category}</b>{timed && <><i aria-hidden="true">·</i><span><Clock3 size={10} /> {task.durationMinutes} min</span></>}</span> : <>
-        <span><b>{task.category}</b> · {scheduleLabel(task.scheduleType)} · {schedule.label}</span>
+      <div className="premium-task-title-row">
+        <strong>{task.title}</strong>
+        {task.goalId && goals?.find(g => g.id === task.goalId) && (
+          <span className="premium-goal-badge"><Target /> {goals.find(g => g.id === task.goalId)?.title}</span>
+        )}
+        <button type="button" onClick={() => onEdit(task)} disabled={active} aria-label={`Edit ${task.title}`}><Pencil size={11} /></button>
+      </div>
+      {compact ? <span className="premium-task-compact-meta">{timed && <><span><Clock3 size={10} /> {task.durationMinutes} min</span><i aria-hidden="true">·</i></>}<span>{schedule.label}</span></span> : <>
+        <span><b>{displayCategory}</b> · {scheduleLabel(task.scheduleType)} · {schedule.label}</span>
         {timed ? <div className="premium-task-progress"><span><i style={{ width: `${progress.percent}%` }} /></span><small>{progress.workedMinutes}m of {task.durationMinutes}m · {progress.remainingMinutes ? `${progress.remainingMinutes}m left` : "Goal reached"}</small></div> : !task.completedAt && !active && <button type="button" className={`premium-task-schedule ${schedule.phase}`} onClick={() => onEdit(task)}><Clock3 size={9} /><b>{schedule.label}</b> · {schedule.detail}<Pencil size={9} /></button>}
       </>}
     </div>
@@ -588,7 +612,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   const [refreshing, setRefreshing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Task | "all" | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
-  const [draftCategory, setDraftCategory] = useState<TaskCategory>("Study");
+  const [draftCategory, setDraftCategory] = useState<TaskCategory>("Productive");
   const [draftSchedule, setDraftSchedule] = useState<TaskSchedule>("once");
   const [draftScheduled, setDraftScheduled] = useState(false);
   const [draftTime, setDraftTime] = useState(defaultScheduledTime);
@@ -596,13 +620,22 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   const [draftAnimation, setDraftAnimation] = useState<TaskAnimation>("auto");
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [editTitle, setEditTitle] = useState("");
-  const [editCategory, setEditCategory] = useState<TaskCategory>("Study");
+  const [editCategory, setEditCategory] = useState<TaskCategory>("Productive");
   const [editDuration, setEditDuration] = useState("25");
   const [editSchedule, setEditSchedule] = useState<TaskSchedule>("once");
   const [editDate, setEditDate] = useState(todayKey);
   const [editScheduled, setEditScheduled] = useState(false);
   const [editTime, setEditTime] = useState(defaultScheduledTime);
   const [editAnimation, setEditAnimation] = useState<TaskAnimation>("auto");
+  const [draftGoalId, setDraftGoalId] = useState<string | null>(null);
+  const [editGoalId, setEditGoalId] = useState<string | null>(null);
+  const [goalsOpen, setGoalsOpen] = useState(false);
+  const [goalsWithHeatmap, setGoalsWithHeatmap] = useState<GoalWithHeatmap[]>([]);
+  const [goalsHeatmapLoading, setGoalsHeatmapLoading] = useState(false);
+  const [newGoalTitle, setNewGoalTitle] = useState("");
+  const [newGoalHours, setNewGoalHours] = useState("1");
+  const [goalBusy, setGoalBusy] = useState("");
+  const [goalMessage, setGoalMessage] = useState("");
   const [taskOrder, setTaskOrder] = useState<string[] | null>(null);
   const taskOrderRef = useRef<string[]>([]);
   const [draggingTaskId, setDraggingTaskId] = useState("");
@@ -630,6 +663,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   const finishAlarmRef = useRef<{ sessionId: string; vibrationIntervalId: number | null; fallbackIntervalId: number | null } | null>(null);
   const silencedAlarmSessionRef = useRef("");
   const nativeAlarmSyncKeyRef = useRef("");
+  const nativeAlarmActionBusyRef = useRef(false);
   const nativeAndroid = isNativeAndroidApp();
 
   const syncNotificationStatus = useCallback(async () => {
@@ -959,13 +993,65 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     try {
       const result = await api<DashboardData>(`/api/dashboard?date=${todayKey()}&from=${weekStartKey()}`);
       if (requestId !== loadRequestRef.current) return;
-      setData(result);
+      const normalized: DashboardData = {
+        ...result,
+        goals: Array.isArray(result.goals)
+          ? result.goals.filter((goal) => goal && typeof goal.id === "string").map((goal) => ({
+              ...goal,
+              targetMinutes: Math.max(1, Number(goal.targetMinutes) || 1),
+              todayMinutes: Math.max(0, Number(goal.todayMinutes) || 0),
+            }))
+          : [],
+        profiles: Array.isArray(result.profiles)
+          ? result.profiles.map((profile) => ({
+              ...profile,
+              tasks: Array.isArray(profile.tasks) ? profile.tasks.map((task) => ({
+                ...task,
+                goalId: typeof task.goalId === "string" && task.goalId ? task.goalId : null,
+                activeSession: task.activeSession
+                  ? {
+                      ...task.activeSession,
+                      extensionSeconds: Math.max(0, Number(task.activeSession.extensionSeconds) || 0),
+                    }
+                  : null,
+              })) : [],
+            }))
+          : [],
+      };
+      setData(normalized);
       setTaskOrder(null);
       if (!silent) setError("");
     } catch (err) {
       if (requestId === loadRequestRef.current && !silent) setError(err instanceof Error ? err.message : "Couldn’t load your day");
     }
   }, []);
+
+  const syncNativeAlarmAction = useCallback(async () => {
+    if (!nativeAndroid || nativeAlarmActionBusyRef.current) return;
+    nativeAlarmActionBusyRef.current = true;
+    try {
+      const pending = await nativeAlarm.pendingAction();
+      if (!pending.actionId || !pending.activityId || (pending.action !== "stop" && pending.action !== "snooze")) return;
+      const action = pending as NativeAlarmAction;
+      const result = await api<{ completed?: boolean; inactive?: boolean }>("/api/alarms/action", {
+        method: "POST",
+        body: JSON.stringify(action),
+      });
+      await nativeAlarm.clearPendingAction(action.actionId);
+      nativeAlarmSyncKeyRef.current = "";
+      if (action.action === "snooze") {
+        setPlannerToast("Timer extended by 5 minutes");
+      } else if (!result.inactive) {
+        setCompleteToast("Focus task");
+      }
+      await load({ silent: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Couldn’t sync the alarm action";
+      if (!/not implemented|does not exist|unavailable/i.test(message)) setError(message);
+    } finally {
+      nativeAlarmActionBusyRef.current = false;
+    }
+  }, [load, nativeAndroid]);
 
   const refreshDashboard = useCallback(async () => {
     setRefreshing(true);
@@ -1002,15 +1088,20 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   useEffect(() => {
     if (!nativeAndroid) return;
     const syncAfterSettings = () => {
-      if (document.visibilityState === "visible") void syncNotificationStatus();
+      if (document.visibilityState === "visible") {
+        void syncNotificationStatus();
+        void syncNativeAlarmAction();
+      }
     };
+    const first = window.setTimeout(() => void syncNativeAlarmAction(), 0);
     window.addEventListener("focus", syncAfterSettings);
     document.addEventListener("visibilitychange", syncAfterSettings);
     return () => {
+      window.clearTimeout(first);
       window.removeEventListener("focus", syncAfterSettings);
       document.removeEventListener("visibilitychange", syncAfterSettings);
     };
-  }, [nativeAndroid, syncNotificationStatus]);
+  }, [nativeAndroid, syncNativeAlarmAction, syncNotificationStatus]);
   useEffect(() => {
     const tick = () => setNow(Date.now());
     const first = window.setTimeout(tick, 0);
@@ -1055,7 +1146,9 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
           ? `edit-${editTask.id}`
           : addOpen
             ? "add"
-            : "";
+            : goalsOpen
+              ? "goals"
+              : "";
 
   useEffect(() => {
     if (!openModalKey) return;
@@ -1107,6 +1200,47 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   }, [audibleTask, audibleTimer, nativeAndroid, playTimerCue, startFinishAlarm, stopFinishAlarm]);
 
   useEffect(() => {
+    if (!nativeAndroid || !audibleTask?.activeSession || !audibleTimer || audibleTimer.remainingSeconds > 0) return;
+    const activityId = audibleTask.activeSession.id;
+    const storageKey = `${NATIVE_ALARM_STORAGE_PREFIX}${activityId}`;
+    const originalTriggerAt = Number(window.localStorage.getItem(storageKey));
+    if (!Number.isFinite(originalTriggerAt) || originalTriggerAt <= 0 || originalTriggerAt > Date.now() + 2_000) return;
+    let cancelled = false;
+    const syncLegacyAction = async () => {
+      if (nativeAlarmActionBusyRef.current) return;
+      nativeAlarmActionBusyRef.current = true;
+      try {
+        const status = await nativeAlarm.status();
+        if (cancelled) return;
+        const snoozed = status.scheduled && status.id === activityId && Number(status.triggerAt) > originalTriggerAt + 60_000;
+        const stopped = !status.scheduled;
+        if (!snoozed && !stopped) return;
+        const action = snoozed ? "snooze" : "stop";
+        const actionId = `legacy-${action}-${activityId}-${snoozed ? status.triggerAt : originalTriggerAt}`;
+        await api("/api/alarms/action", {
+          method: "POST",
+          body: JSON.stringify({ actionId, activityId, action }),
+        });
+        if (action === "snooze" && status.triggerAt) {
+          window.localStorage.setItem(storageKey, String(status.triggerAt));
+          nativeAlarmSyncKeyRef.current = "";
+          setPlannerToast("Timer extended by 5 minutes");
+        } else {
+          window.localStorage.removeItem(storageKey);
+          setCompleteToast(audibleTask.title);
+        }
+        await load({ silent: true });
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Couldn’t sync the alarm action");
+      } finally {
+        nativeAlarmActionBusyRef.current = false;
+      }
+    };
+    void syncLegacyAction();
+    return () => { cancelled = true; };
+  }, [audibleTask, audibleTimer, load, nativeAndroid]);
+
+  useEffect(() => {
     if (!nativeAndroid || !data) return;
     if (!audibleTask?.activeSession || !audibleTimer || audibleTimer.paused) {
       if (nativeAlarmSyncKeyRef.current !== "none") {
@@ -1122,6 +1256,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     if (nativeAlarmSyncKeyRef.current === key) return;
     nativeAlarmSyncKeyRef.current = key;
     void nativeAlarm.schedule(audibleTask.activeSession.id, audibleTask.title, triggerAt).then((status) => {
+      window.localStorage.setItem(`${NATIVE_ALARM_STORAGE_PREFIX}${audibleTask.activeSession!.id}`, String(triggerAt));
       setNativeAlarmStatus(status);
       if (!status.exact) setNotificationMessage("This timer is scheduled approximately. Enable Android exact alarms for reliable timing.");
     }).catch((err) => {
@@ -1196,6 +1331,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       if (nativeAndroid && switchingSessionId) await nativeAlarm.cancel(switchingSessionId);
       if (nativeAndroid && action === "finish" && sessionId) {
         await nativeAlarm.cancel(sessionId);
+        window.localStorage.removeItem(`${NATIVE_ALARM_STORAGE_PREFIX}${sessionId}`);
         nativeAlarmSyncKeyRef.current = "none";
       }
       if (action === "start" || action === "resume") setActiveTab("home");
@@ -1228,6 +1364,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       await api(`/api/tasks/${pauseTask.id}/pause`, { method: "POST", body: JSON.stringify({ category }) });
       if (nativeAndroid && pauseTask.activeSession?.id) {
         await nativeAlarm.cancel(pauseTask.activeSession.id);
+        window.localStorage.removeItem(`${NATIVE_ALARM_STORAGE_PREFIX}${pauseTask.activeSession.id}`);
         nativeAlarmSyncKeyRef.current = "none";
       }
       setPauseTask(null);
@@ -1244,13 +1381,15 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     const form = new FormData(event.currentTarget);
     setBusyId("new");
     try {
-      await api("/api/tasks", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
+      const formObj = Object.fromEntries(form.entries()) as Record<string, string>;
+      await api("/api/tasks", { method: "POST", body: JSON.stringify({ ...formObj, goalId: draftGoalId ?? "" }) });
       setAddOpen(false);
       setDraftTitle("");
-      setDraftCategory("Study");
+      setDraftCategory("Productive");
       setDraftSchedule("once");
       setDraftScheduled(false);
       setDraftTime(defaultScheduledTime());
+      setDraftGoalId(null);
       setDraftDuration("30");
       setDraftAnimation("auto");
       await Promise.all([load(), syncNotificationStatus()]);
@@ -1272,17 +1411,19 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     }
     setEditTask(task);
     setEditTitle(task.title);
-    setEditCategory(task.category);
+    setEditCategory(task.category === "Study" ? "Productive" : task.category);
     setEditDuration(String(task.durationMinutes));
     setEditSchedule(task.scheduleType);
     setEditDate(task.scheduledDate ?? todayKey());
     setEditScheduled(Boolean(task.scheduledTime));
     setEditTime(task.scheduledTime ?? defaultScheduledTime());
     setEditAnimation(task.animationKey);
+    setEditGoalId(task.goalId);
   }
 
   function closeEditTask() {
     setEditTask(null);
+    setEditGoalId(null);
   }
 
   async function updateTask(event: FormEvent<HTMLFormElement>) {
@@ -1292,7 +1433,8 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
     setBusyId(`edit-${editTask.id}`);
     setError("");
     try {
-      const result = await api<{ updated: boolean; reopened: boolean }>(`/api/tasks/${editTask.id}`, { method: "PATCH", body: JSON.stringify(Object.fromEntries(form.entries())) });
+      const formObj = Object.fromEntries(form.entries()) as Record<string, string>;
+      const result = await api<{ updated: boolean; reopened: boolean }>(`/api/tasks/${editTask.id}`, { method: "PATCH", body: JSON.stringify({ ...formObj, goalId: editGoalId ?? "" }) });
       closeEditTask();
       setPlannerToast(result.reopened ? "More time added · ready to resume" : "Task plan updated");
       await Promise.all([load(), syncNotificationStatus()]);
@@ -1300,6 +1442,64 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
       setError(err instanceof Error ? err.message : "Couldn’t save those task changes");
     } finally {
       setBusyId("");
+    }
+  }
+
+  async function openGoals() {
+    setGoalsOpen(true);
+    setGoalsHeatmapLoading(true);
+    setGoalMessage("");
+    try {
+      const result = await api<{ goals: GoalWithHeatmap[] }>(`/api/goals?date=${todayKey()}`);
+      setGoalsWithHeatmap(result.goals);
+    } catch (err) {
+      setGoalMessage(err instanceof Error ? err.message : "Couldn't load goal details");
+    } finally {
+      setGoalsHeatmapLoading(false);
+    }
+  }
+
+  function closeGoals() {
+    setGoalsOpen(false);
+    setNewGoalTitle("");
+    setNewGoalHours("1");
+    setGoalMessage("");
+  }
+
+  async function addGoal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setGoalBusy("add");
+    setGoalMessage("");
+    try {
+      const targetMinutes = Math.max(1, Math.round(Number(newGoalHours) * 60));
+      const result = await api<{ goal: GoalWithHeatmap }>("/api/goals", {
+        method: "POST",
+        body: JSON.stringify({ title: newGoalTitle, targetMinutes }),
+      });
+      setGoalsWithHeatmap((prev) => [...prev, { ...result.goal, heatmap: [] }]);
+      setNewGoalTitle("");
+      setNewGoalHours("1");
+      await load();
+    } catch (err) {
+      setGoalMessage(err instanceof Error ? err.message : "Couldn't create that goal");
+    } finally {
+      setGoalBusy("");
+    }
+  }
+
+  async function deleteGoal(goalId: string) {
+    setGoalBusy(`delete-${goalId}`);
+    setGoalMessage("");
+    try {
+      await api(`/api/goals?id=${encodeURIComponent(goalId)}`, { method: "DELETE" });
+      setGoalsWithHeatmap((prev) => prev.filter((g) => g.id !== goalId));
+      if (draftGoalId === goalId) setDraftGoalId(null);
+      if (editGoalId === goalId) setEditGoalId(null);
+      await load();
+    } catch (err) {
+      setGoalMessage(err instanceof Error ? err.message : "Couldn't delete that goal");
+    } finally {
+      setGoalBusy("");
     }
   }
 
@@ -1409,9 +1609,15 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
   </main>;
 
   const currentNow = now ?? Date.parse(data.generatedAt);
+  const goals = data.goals ?? [];
   const myTask = me.busy ? me.tasks.find((task) => task.id === me.busy!.taskId) ?? null : null;
   const partnerTask = partner.busy ? partner.tasks.find((task) => task.id === partner.busy!.taskId) ?? null : null;
   const timer = myTask ? countdownState(myTask, currentNow) : null;
+  const goalLiveMinutes = (goal: Goal) => {
+    if (!myTask || myTask.goalId !== goal.id || !timer) return goal.todayMinutes;
+    const activeSegmentMinutes = Math.max(0, timer.elapsedMinutes - Math.max(0, Number(myTask.progressSeconds) || 0) / 60);
+    return Math.round((goal.todayMinutes + activeSegmentMinutes) * 10) / 10;
+  };
   const partnerTimer = partnerTask ? countdownState(partnerTask, currentNow) : null;
   const plannedTask = myTask ? null : me.tasks
     .filter((task) => !task.completedAt)
@@ -1435,10 +1641,12 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
         ? isKaveri(me) ? LOTTIES.sleepingFemale : LOTTIES.sleepingMale
         : isKaveri(me) ? LOTTIES.natureFemale : LOTTIES.studyMale;
   const partnerAnimation = partnerTask ? lottieFor(partnerTask, partner, false) : null;
-  const progress = myTask && timer && myTask.durationMinutes ? Math.min(100, Math.max(0, (timer.elapsedMinutes / myTask.durationMinutes) * 100)) : 0;
+  const activeTargetMinutes = myTask ? myTask.durationMinutes + (myTask.activeSession?.extensionSeconds ?? 0) / 60 : 0;
+  const progress = myTask && timer && activeTargetMinutes ? Math.min(100, Math.max(0, (timer.elapsedMinutes / activeTargetMinutes) * 100)) : 0;
   const maxScore = Math.max(1, Math.abs(me.score), Math.abs(partner.score));
-  const focusStudy = me.focusMinutes.study + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Study" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
-  const focusProductive = me.focusMinutes.productive + (myTask && (myTask.activeSession?.currentPause?.category ?? myTask.category) === "Productive" ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0);
+  const activeFocusCategory = myTask?.activeSession?.currentPause?.category ?? myTask?.category;
+  const liveProductiveMinutes = myTask && (activeFocusCategory === "Study" || activeFocusCategory === "Productive") ? Math.max(0, currentNow - Date.parse(data.generatedAt)) / 60000 : 0;
+  const focusProductive = me.focusMinutes.study + me.focusMinutes.productive + liveProductiveMinutes;
   const weekdayName = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date());
   const editWeekdayName = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date(`${editDate}T12:00:00`));
   const editWillReopen = Boolean(editTask?.completedAt && Number(editDuration) * 60 > Number(editTask.progressSeconds));
@@ -1465,6 +1673,7 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
         </div>
         <div className="premium-top-actions">
           <span className="premium-score-pill"><Flame size={15} fill="currentColor" /> {formatPoints(me.score)} pts</span>
+          <button type="button" className="premium-refresh" onClick={() => void openGoals()} aria-label="Manage goals"><Target size={15} /><span>Goals</span></button>
           <button type="button" className={`premium-refresh ${refreshing ? "is-refreshing" : ""}`} onClick={() => void refreshDashboard()} disabled={refreshing} aria-label={refreshing ? "Refreshing dashboard" : "Refresh dashboard"} title="Refresh dashboard"><RefreshCw size={15} /><span>{refreshing ? "Refreshing" : "Refresh"}</span></button>
           <button type="button" className={`premium-notification-button is-${notificationState}`} onClick={() => setSettingsOpen(true)} aria-label={`Notifications: ${notificationState}`} title="Notification settings">{notificationState === "enabled" ? <BellRing size={16} /> : notificationState === "blocked" ? <BellOff size={16} /> : <Bell size={16} />}<span>Alerts</span><i /></button>
           <button type="button" className="premium-new-task" onClick={() => setAddOpen(true)}><Plus size={16} /> New task</button>
@@ -1521,18 +1730,34 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
             </div>
 
             {myTask && timer ? <div className="premium-focus-footer">
-              <div className="premium-session-meta"><span><Timer size={14} /> {myTask.durationMinutes} min goal</span><span><Flame size={14} /> {timer.livePoints > 0 ? "+" : ""}{formatPoints(timer.livePoints)} live points</span>{timer.paused && <span><Clock3 size={14} /> {timer.pauseElapsed} paused</span>}</div>
+              <div className="premium-session-meta"><span><Timer size={14} /> {activeTargetMinutes} min goal</span><span><Flame size={14} /> {timer.livePoints > 0 ? "+" : ""}{formatPoints(timer.livePoints)} live points</span>{timer.paused && <span><Clock3 size={14} /> {timer.pauseElapsed} paused</span>}</div>
               <div className="premium-focus-actions">
                 {timer.paused ? <button className="premium-resume" onClick={() => taskAction(myTask, "resume")}><Play size={16} fill="currentColor" /> Resume</button> : <button className="premium-pause" onClick={() => setPauseTask(myTask)}><Pause size={16} fill="currentColor" /> Pause</button>}
                 <button className="premium-finish" onClick={() => taskAction(myTask, "finish")}><Check size={17} strokeWidth={3} /> Finish session</button>
               </div>
+              {myTask.goalId && goals.find((g) => g.id === myTask.goalId) && (
+                <div className="premium-focus-goal-bar">
+                  {(() => {
+                    const g = goals.find((g) => g.id === myTask.goalId)!;
+                    const minutes = goalLiveMinutes(g);
+                    return (
+                      <div className="premium-goal-bar-row">
+                        <div><span><Target size={10} /> {g.title}</span> <b>{minutes} / {g.targetMinutes}m</b></div>
+                        <div className="premium-goal-bar-track">
+                          <div className="premium-goal-bar-fill" style={{ width: `${Math.min(100, Math.round((minutes / g.targetMinutes) * 100))}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div> : <div className="premium-idle-footer">{plannedTask ? <><p><Clock3 size={14} /> {plannedTask.scheduledTime ? `${plannedSchedule?.detail}. Planned for ${formatClockTime(plannedTask.scheduledTime)}.` : "Ready whenever you are. Start it when you want."}</p><button onClick={() => taskAction(plannedTask, plannedTask.durationMinutes > 0 ? "start" : "toggle")} disabled={Boolean(busyId)}><Play size={16} fill="currentColor" /> {plannedTask.durationMinutes > 0 ? "Start now" : "Complete task"}</button></> : <><p>Your day is clear. Add a task and start whenever you&apos;re ready.</p><button onClick={() => setAddOpen(true)}><Plus size={16} /> Plan a focus session</button></>}</div>}
           </section>
 
           <div className="premium-tab-heading premium-progress-heading"><span className="premium-kicker">YOUR MOMENTUM</span><h1>Progress that feels alive.</h1><p>A clean view of your time, consistency, and shared score this week.</p></div>
           <section className="premium-insights" id="progress">
-            <article><span className="premium-insight-icon study"><BookOpen size={18} /></span><div><small>STUDY TODAY</small><strong>{formatFocusTime(focusStudy)}</strong></div><span className="premium-trend">2 pts/min</span></article>
-            <article><span className="premium-insight-icon productive"><Briefcase size={18} /></span><div><small>PRODUCTIVE</small><strong>{formatFocusTime(focusProductive)}</strong></div><span className="premium-trend">2 pts/min</span></article>
+            <article><span className="premium-insight-icon productive"><Briefcase size={18} /></span><div><small>PRODUCTIVE TODAY</small><strong>{formatFocusTime(focusProductive)}</strong></div><span className="premium-trend">2 pts/min</span></article>
+            <article><span className="premium-insight-icon study"><CircleCheck size={18} /></span><div><small>TASKS DONE</small><strong>{me.todayCompleted}/{me.totalToday}</strong></div><span className="premium-trend">Today</span></article>
             <article className="premium-couple-score"><span className="premium-insight-icon score"><Trophy size={18} /></span><div><small>THIS WEEK</small><strong>{formatPoints(me.score + partner.score)} pts</strong></div><div className="premium-duo"><span className={me.accent}>{me.avatar}</span><span className={partner.accent}>{partner.avatar}</span></div></article>
           </section>
         </div>
@@ -1546,12 +1771,40 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
             {partnerTask && <b>{partnerTimer?.label}</b>}
           </div>
 
-          <div className="premium-planner-hint"><span><GripVertical size={12} /> Drag to reorder</span><span>{activeTab === "tasks" ? <><Pencil size={11} /> Edit for more details</> : <><CalendarClock size={12} /> Tap timing to schedule</>}</span></div>
+          <div className="premium-planner-hint"><span>{activeTab === "tasks" ? <><BarChart3 size={12} /> Tasks by category</> : <><GripVertical size={12} /> Drag to reorder</>}</span><span>{activeTab === "tasks" ? <><ChevronRight size={11} /> Scroll each category</> : <><CalendarClock size={12} /> Tap timing to schedule</>}</span></div>
 
-          <div className="premium-task-list">
-            {plannerTasks.length ? plannerTasks.map((task, index) => <QueueTask key={task.id} task={task} busy={Boolean(me.busy)} updating={Boolean(busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === plannerTasks.length - 1} compact={activeTab === "tasks"} onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-empty"><Sparkles size={22} /><strong>Your day is open</strong><p>Add a task and make the first move.</p></div>}
-          </div>
-          <button type="button" className="premium-add-row" onClick={() => setAddOpen(true)}><Plus size={15} /> {activeTab === "tasks" ? "Add task" : "Add to today"}</button>
+          {goals.length > 0 && <div className="premium-goal-bars" aria-label="Today's goal progress">
+            {goals.map((goal) => {
+              const minutes = goalLiveMinutes(goal);
+              const percent = Math.min(100, Math.round(minutes / goal.targetMinutes * 100));
+              return <div className="premium-goal-bar-row" key={goal.id}>
+                <div><span><Target size={10} /> {goal.title}</span><b>{minutes} / {goal.targetMinutes}m</b></div>
+                <div className="premium-goal-bar-track"><div className="premium-goal-bar-fill" style={{ width: `${percent}%` }} /></div>
+              </div>;
+            })}
+          </div>}
+
+          {activeTab === "tasks" ? <div className="premium-task-board" aria-label="Tasks grouped by category">
+            {TASK_CATEGORIES.map((category) => {
+              const categoryTasks = plannerTasks.filter((task) => task.category === category || (category === "Productive" && task.category === "Study"));
+              const completedCount = categoryTasks.filter((task) => task.completedAt).length;
+              return <section className={`premium-task-column column-${categorySlug(category)}`} key={category} aria-labelledby={`task-column-${categorySlug(category)}`}>
+                <header>
+                  <span><CategoryIcon category={category} size={17} /></span>
+                  <div><h3 id={`task-column-${categorySlug(category)}`}>{category}</h3><small>{completedCount} of {categoryTasks.length} done</small></div>
+                  <button type="button" className="premium-column-add-icon" onClick={() => { setDraftCategory(category); setAddOpen(true); }} aria-label={`Add ${category.toLowerCase()} task`}><Plus size={15} /></button>
+                </header>
+                <div className="premium-task-column-scroll">
+                  {categoryTasks.length ? categoryTasks.map((task, index) => <QueueTask key={task.id} task={task} goals={goals} busy={Boolean(me.busy)} updating={Boolean(busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === categoryTasks.length - 1} compact onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-column-empty"><Sparkles size={17} /><span>No {category.toLowerCase()} tasks yet</span></div>}
+                </div>
+              </section>;
+            })}
+          </div> : <>
+            <div className="premium-task-list">
+              {plannerTasks.length ? plannerTasks.map((task, index) => <QueueTask key={task.id} task={task} goals={goals} busy={Boolean(me.busy)} updating={Boolean(busyId)} now={currentNow} dragging={draggingTaskId === task.id} isFirst={index === 0} isLast={index === plannerTasks.length - 1} compact={false} onAction={taskAction} onPause={setPauseTask} onEdit={openEditTask} onDragStart={startTaskDrag} onMove={moveTask} />) : <div className="premium-empty"><Sparkles size={22} /><strong>Your day is open</strong><p>Add a task and make the first move.</p></div>}
+            </div>
+            <button type="button" className="premium-add-row" onClick={() => setAddOpen(true)}><Plus size={15} /> Add to today</button>
+          </>}
 
           <section className="premium-race-card">
             <div><span className="premium-kicker">WEEKLY RACE</span><Trophy size={16} /></div>
@@ -1653,7 +1906,22 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
           ] as const).map(([value, label, detail, Icon]) => <button type="button" key={value} className={draftSchedule === value ? "selected" : ""} onClick={() => setDraftSchedule(value)} aria-pressed={draftSchedule === value}><Icon size={15} /><span><strong>{label}</strong><small>{detail}</small></span>{draftSchedule === value && <Check size={13} />}</button>)}
         </fieldset>
 
+        {goals.length ? (
+          <fieldset className="premium-schedule" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
+            <legend>Link to Goal (Optional)</legend>
+            <button type="button" className={`premium-goal-chip ${!draftGoalId ? "selected" : ""}`} onClick={() => setDraftGoalId(null)}>
+              No goal
+            </button>
+            {goals.map((g) => (
+              <button key={g.id} type="button" className={`premium-goal-chip ${draftGoalId === g.id ? "selected" : ""}`} onClick={() => setDraftGoalId(g.id)}>
+                <Target size={14} /> {g.title}
+              </button>
+            ))}
+          </fieldset>
+        ) : null}
+
         <TaskAnimationPicker name="animationKey" value={draftAnimation} onChange={setDraftAnimation} title={draftTitle} category={draftCategory} profile={me} />
+
       </form>
     </div>}
 
@@ -1691,7 +1959,22 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
         </fieldset>
 
         <label className={`premium-field premium-date-field ${editSchedule === "once" ? "is-visible" : ""}`}>Scheduled date<input name="dateKey" type="date" value={editDate} onChange={(event) => setEditDate(event.target.value)} required /></label>
+        {goals.length ? (
+          <fieldset className="premium-schedule" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
+            <legend>Link to Goal (Optional)</legend>
+            <button type="button" className={`premium-goal-chip ${!editGoalId ? "selected" : ""}`} onClick={() => setEditGoalId(null)}>
+              No goal
+            </button>
+            {goals.map((g) => (
+              <button key={g.id} type="button" className={`premium-goal-chip ${editGoalId === g.id ? "selected" : ""}`} onClick={() => setEditGoalId(g.id)}>
+                <Target size={14} /> {g.title}
+              </button>
+            ))}
+          </fieldset>
+        ) : null}
+
         <TaskAnimationPicker name="animationKey" value={editAnimation} onChange={setEditAnimation} title={editTitle} category={editCategory} profile={me} />
+
         <div className="premium-edit-footer"><p className="premium-edit-note"><LockKeyhole size={12} /> Editing this plan keeps previous tracked time and points unchanged.</p><button type="button" className="premium-delete-task" onClick={() => setDeleteTarget(editTask)}><Trash2 size={13} /> Delete task</button></div>
       </form>
     </div>}
@@ -1714,6 +1997,76 @@ export default function PremiumDashboard({ onLogout }: { onLogout: () => Promise
         <div className="premium-pause-grid">{TASK_CATEGORIES.filter((category) => category !== pauseTask.category).map((category) => <button key={category} className={categorySlug(category)} onClick={() => pauseFor(category)} disabled={busyId === pauseTask.id}><span><CategoryIcon category={category} size={19} /></span><strong>{category}</strong><small>{category === "Entertainment" ? "−0.5 pts/min" : category === "Daily essentials" ? "1 pt/min" : "2 pts/min"}</small></button>)}</div>
         <p className="premium-lock-note"><LockKeyhole size={11} /> Your original task remains protected and resumes exactly where it stopped.</p>
       </section>
+    </div>}
+
+    {goalsOpen && <div className="premium-modal-backdrop" role="presentation" onKeyDown={(event) => handleModalKeyDown(event, closeGoals)} onMouseDown={(event) => { if (event.target === event.currentTarget) closeGoals(); }}>
+      <div className="premium-modal premium-task-modal premium-goals-sheet" role="dialog" aria-modal="true" aria-labelledby="premium-goals-title">
+        <div className="premium-task-modal-bar">
+          <button type="button" className="premium-modal-close" onClick={closeGoals} aria-label="Close"><X size={17} /></button>
+          <div><small>YOUR GOALS</small><strong id="premium-goals-title">Track your progress</strong></div>
+          <button className="premium-create-button premium-create-button-top" onClick={closeGoals}>Done</button>
+        </div>
+
+        {goalMessage && <div className="premium-error">{goalMessage}</div>}
+
+        {goalsHeatmapLoading ? (
+          <div className="premium-loading-copy" style={{ alignSelf: 'center', margin: '40px 0' }}><strong>two.</strong><p>Loading goals...</p></div>
+        ) : (
+          <>
+            {goalsWithHeatmap.length === 0 ? (
+              <div className="premium-empty"><Target size={22} /><strong>No goals set</strong><p>Add a goal below to start tracking your time towards a target.</p></div>
+            ) : (
+              goalsWithHeatmap.map((goal) => {
+                const percent = Math.min(100, Math.round((goal.todayMinutes / goal.targetMinutes) * 100));
+                return (
+                  <div key={goal.id} className="premium-goal-item">
+                    <div className="premium-goal-item-header">
+                      <div>
+                        <h3>{goal.title}</h3>
+                        <small>{goal.todayMinutes}m / {goal.targetMinutes}m today ({percent}%)</small>
+                      </div>
+                      <button type="button" className="premium-goal-delete" onClick={() => deleteGoal(goal.id)} disabled={Boolean(goalBusy)} aria-label="Delete goal">
+                        {goalBusy === `delete-${goal.id}` ? <RefreshCw size={14} className="spin" /> : <Trash2 size={14} />}
+                      </button>
+                    </div>
+                    <div className="premium-goal-bar-track">
+                      <div className="premium-goal-bar-fill" style={{ width: `${percent}%` }} />
+                    </div>
+                    <div>
+                      <small style={{ fontSize: '10px', color: 'var(--p-muted)', display: 'block', marginBottom: '4px' }}>LAST 56 DAYS</small>
+                      <div className="premium-heatmap">
+                        {goal.heatmap.map((day) => {
+                          const level = day.minutes === 0 ? 0 : day.minutes < 30 ? 1 : day.minutes < 60 ? 2 : day.minutes < 120 ? 3 : 4;
+                          return <div key={day.date} data-level={level} title={`${day.minutes} min on ${day.date}`} />;
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            <form className="premium-goal-add" onSubmit={addGoal}>
+              <strong>Create a new goal</strong>
+              <label className="premium-field">Goal name<input value={newGoalTitle} onChange={(e) => setNewGoalTitle(e.target.value)} placeholder="E.g. Study for UPSC" required maxLength={60} disabled={Boolean(goalBusy)} /></label>
+              <label className="premium-field">Daily target (hours)<select value={newGoalHours} onChange={(e) => setNewGoalHours(e.target.value)} disabled={Boolean(goalBusy)}>
+                <option value="0.5">30 minutes</option>
+                <option value="1">1 hour</option>
+                <option value="2">2 hours</option>
+                <option value="3">3 hours</option>
+                <option value="4">4 hours</option>
+                <option value="5">5 hours</option>
+                <option value="6">6 hours</option>
+                <option value="8">8 hours</option>
+                <option value="9">9 hours</option>
+                <option value="10">10 hours</option>
+                <option value="12">12 hours</option>
+              </select></label>
+              <button type="submit" className="premium-create-button" disabled={Boolean(goalBusy)}>{goalBusy === "add" ? "Adding..." : "Add Goal"}</button>
+            </form>
+          </>
+        )}
+      </div>
     </div>}
   </div>;
 }

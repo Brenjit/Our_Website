@@ -25,9 +25,11 @@ type TaskRow = {
   scheduled_time: string | null;
   animation_key: string;
   sort_order: number;
+  goal_id: string | null;
   completed_at: string | null;
   activity_id: string | null;
   started_at: string | null;
+  extension_seconds: number;
   pause_id: string | null;
   pause_category: string | null;
   pause_started_at: string | null;
@@ -64,16 +66,16 @@ export async function GET(request: Request) {
   const db = getDatabase();
 
   const now = new Date().toISOString();
-  const [profileResult, taskResult, scoreResult, activityResult, focusSessionResult, focusPauseResult] = await Promise.all([
+  const [profileResult, taskResult, scoreResult, activityResult, focusSessionResult, focusPauseResult, goalsResult, goalProgressResult] = await Promise.all([
     db.prepare("SELECT id, name, avatar, accent FROM profiles WHERE couple_id = ? ORDER BY created_at")
       .bind(user.couple_id)
       .all<Profile>(),
     db.prepare(`SELECT t.id, t.owner_id, t.title, t.category, t.duration_minutes, t.points,
-        t.schedule_type, t.scheduled_date, t.scheduled_weekday, t.scheduled_time, t.animation_key, t.sort_order,
+        t.schedule_type, t.scheduled_date, t.scheduled_weekday, t.scheduled_time, t.animation_key, t.sort_order, t.goal_id,
         c.completed_at,
         COALESCE(tp.elapsed_seconds, 0) AS progress_seconds,
         COALESCE(tp.points_earned, 0) AS progress_points,
-        a.id AS activity_id, a.started_at,
+        a.id AS activity_id, a.started_at, COALESCE(a.extension_seconds, 0) AS extension_seconds,
         ap.id AS pause_id, ap.category AS pause_category, ap.started_at AS pause_started_at,
         COALESCE((SELECT SUM((julianday(closed_pause.ended_at) - julianday(closed_pause.started_at)) * 86400)
           FROM activity_pauses closed_pause
@@ -135,6 +137,18 @@ export async function GET(request: Request) {
       WHERE p.couple_id = ? AND a.date_key BETWEEN ? AND ?`)
       .bind(user.couple_id, from, date)
       .all<FocusPauseRow>(),
+    db.prepare("SELECT id, title, target_minutes FROM goals WHERE profile_id = ? ORDER BY created_at ASC")
+      .bind(user.id)
+      .all<{ id: string; title: string; target_minutes: number }>(),
+    db.prepare(`
+      SELECT t.goal_id, COALESCE(SUM(tp.elapsed_seconds), 0) AS total_seconds
+      FROM task_progress tp
+      JOIN tasks t ON t.id = tp.task_id
+      WHERE tp.profile_id = ? AND tp.date_key = ? AND t.goal_id IS NOT NULL
+      GROUP BY t.goal_id
+    `)
+      .bind(user.id, date)
+      .all<{ goal_id: string; total_seconds: number }>(),
   ]);
 
   const profiles = profileResult.results.map((profile) => {
@@ -195,6 +209,7 @@ export async function GET(request: Request) {
         animationKey: task.animation_key,
         sortOrder: task.sort_order,
         completedAt: task.completed_at,
+        goalId: task.goal_id ?? null,
         progressSeconds: task.completed_at && !Number(task.progress_seconds)
           ? task.duration_minutes * 60
           : Number(task.progress_seconds ?? 0),
@@ -203,6 +218,7 @@ export async function GET(request: Request) {
           ? {
               id: task.activity_id,
               startedAt: task.started_at,
+              extensionSeconds: Number(task.extension_seconds ?? 0),
               pausedSeconds: Number(task.paused_seconds ?? 0),
               pausePoints: Number(task.pause_points ?? 0),
               currentPause: task.pause_id
@@ -214,12 +230,23 @@ export async function GET(request: Request) {
     };
   });
 
+  const goalProgressMap = new Map(
+    goalProgressResult.results.map((r) => [r.goal_id, Math.round(r.total_seconds / 60)])
+  );
+  const goals = goalsResult.results.map((g) => ({
+    id: g.id,
+    title: g.title,
+    targetMinutes: g.target_minutes,
+    todayMinutes: goalProgressMap.get(g.id) ?? 0,
+  }));
+
   return Response.json({
     generatedAt: now,
     user: { id: user.id, name: user.name, avatar: user.avatar, accent: user.accent },
     isInitializer: profileResult.results[0]?.id === user.id,
     profiles,
     recentActivity: activityResult.results,
+    goals,
     date,
   });
 }
